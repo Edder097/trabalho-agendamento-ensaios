@@ -35,8 +35,16 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
   // 💻 Em desenvolvimento (mude para /api):
   const linkCancelamento = `http://localhost:3000/api/v1/agendamentos/cancelar?id=${ensaio.id}&token=${ensaio.token_cancelamento}`;
 
-  // 🚀 PRODUÇÃO:
-  // const linkCancelamento = `https://api.suaagencia.com.br/v1/agendamentos/cancelar?id=${ensaio.id}&token=${ensaio.token_cancelamento}`;
+  // Cálculo das datas para o Google Calendar
+  const dataBanco = new Date(ensaio.data_ensaio);
+  const ano = dataBanco.getUTCFullYear();
+  const mes = String(dataBanco.getUTCMonth() + 1).padStart(2, '0');
+  const dia = String(dataBanco.getUTCDate()).padStart(2, '0');
+  const dataFormatadaISO = `${ano}-${mes}-${dia}`;
+  
+  // Garantindo o formato HH:mm:ss
+  const inicioComSegundos = ensaio.hora_inicio.length === 5 ? `${ensaio.hora_inicio}:00` : ensaio.hora_inicio;
+  const fimComSegundos = ensaio.hora_fim.length === 5 ? `${ensaio.hora_fim}:00` : ensaio.hora_fim;
 
   const htmlContent = `
     <div style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f172a; color: #f1f5f9; padding: 30px; border-radius: 12px; max-width: 500px; border: 1px solid #1e293b; margin: 0 auto;">
@@ -64,10 +72,17 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     'confirmacao_cliente',
     ensaio.email_cliente,
     '📆 Agendamento Confirmado - Arsenal Estratégia',
-    htmlContent
+    htmlContent,
+    { 
+      // Dados extras para o n8n criar o evento no Google Calendar
+      google_calendar: {
+        start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
+        end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
+      }
+    }
   );
   
-  console.log(`🚀 Payload de confirmação enviado para o n8n (Destino: ${ensaio.email_cliente})`);
+  console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
 }
 
 export async function notificarColaboradorAtribuido(colaborador: any, ensaio: any) {
