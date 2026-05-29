@@ -3,10 +3,14 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Configurar autenticação com o Google (Formato corrigido em objeto)
+// ✅ Configurar autenticação com o Google passando apenas 1 objeto
 const auth = new google.auth.JWT({
   email: process.env.GOOGLE_CLIENT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  key: process.env.GOOGLE_PRIVATE_KEY
+    ?.trim()                         // Remove espaços nas pontas
+    ?.replace(/^"/, '')              // Remove aspa inicial se houver
+    ?.replace(/"$/, '')              // Remove aspa final se houver
+    ?.replace(/\\n/g, '\n'),        // Converte os \n textuais em quebras reais
   scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
 
