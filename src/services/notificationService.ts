@@ -9,21 +9,16 @@ function formatarData(data: string): string {
   return isNaN(d.getTime()) ? data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-// ⚡ A MÁGICA ESTÁ NA ÚLTIMA LINHA DESTE BLOCO (as any)
+// ⚡ FORÇANDO AS CONFIGURAÇÕES DO GMAIL E IGNORANDO AS VARIÁVEIS DE AMBIENTE PROBLEMÁTICAS
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT) || 587, // Garante 587 se a env falhar
-  secure: false, // TLS/STARTTLS para porta 587
+  host: 'smtp.gmail.com', // Cravado no Gmail
+  port: 587,              // Cravado na 587 (ignora o process.env.EMAIL_PORT)
+  secure: false,          // TLS/STARTTLS obrigatório para 587
   
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    pass: process.env.EMAIL_PASS, // Continua pegando a sua senha de app segura
   },
-
-  // 🔌 FORÇA O NODEMAILER A USAR IPV4 (Resolve o erro ENETUNREACH)
-  family: 4, 
-
-  requireTLS: true, 
 
   tls: {
     rejectUnauthorized: false 
@@ -32,7 +27,7 @@ const transporter = nodemailer.createTransport({
   connectionTimeout: 20000,
   greetingTimeout: 20000,
   socketTimeout: 30000,
-} as any); // <--- ISTO FAZ A LINHA VERMELHA DO 'host' SUMIR NA HORA
+} as any);
 
 export async function enviarEmailConfirmacaoCliente(ensaio: any) {
   // 💻 Em desenvolvimento (mude para /api):
