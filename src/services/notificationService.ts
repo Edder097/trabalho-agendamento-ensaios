@@ -9,31 +9,30 @@ function formatarData(data: string): string {
   return isNaN(d.getTime()) ? data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+// ⚡ A MÁGICA ESTÁ NA ÚLTIMA LINHA DESTE BLOCO (as any)
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT), // Certifique-se de que está 587 na Render
-  secure: false, // Obrigatório para 587
+  port: Number(process.env.EMAIL_PORT) || 587, // Garante 587 se a env falhar
+  secure: false, // TLS/STARTTLS para porta 587
   
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
 
-  // ⚡ Força o Nodemailer a usar STARTTLS explicitamente
+  // 🔌 FORÇA O NODEMAILER A USAR IPV4 (Resolve o erro ENETUNREACH)
+  family: 4, 
+
   requireTLS: true, 
 
   tls: {
-    // 🛡️ Não rejeita se o certificado da HostGator for autoassinado/compartilhado
     rejectUnauthorized: false 
   },
 
-  // ⏳ Configurações estritas de timeout para redes instáveis de produção
-  connectionTimeout: 20000,  // 20 segundos para abrir a conexão
-  greetingTimeout: 20000,    // 20 segundos para aguardar o "boas-vindas" do SMTP
-  socketTimeout: 30000,      // 30 segundos de inatividade tolerada
-});
-
-// ... resto das suas funções de envio de e-mail (enviarEmailConfirmacaoCliente, etc)
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 30000,
+} as any); // <--- ISTO FAZ A LINHA VERMELHA DO 'host' SUMIR NA HORA
 
 export async function enviarEmailConfirmacaoCliente(ensaio: any) {
   // 💻 Em desenvolvimento (mude para /api):
