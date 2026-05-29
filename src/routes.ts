@@ -24,15 +24,20 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     const dataSelecionada = new Date(data as string);
     const diaDaSemana = dataSelecionada.getUTCDay(); 
 
+    // 🔥 VALIDAÇÃO DOS 3 DIAS DE ANTECEDÊNCIA MÍNIMA
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
+    
+    // Define a data mínima permitida (Hoje + 3 dias)
+    const dataMinimaPermitida = new Date(hoje);
+    dataMinimaPermitida.setDate(dataMinimaPermitida.getDate() + 3);
 
     const dataComparacao = new Date(dataSelecionada.getUTCFullYear(), dataSelecionada.getUTCMonth(), dataSelecionada.getUTCDate());
 
-    if (dataComparacao <= hoje) {
+    if (dataComparacao < dataMinimaPermitida) {
       return res.json({ 
         permitido: false, 
-        mensagem: 'Não é possível agendar ensaios para o mesmo dia ou datas passadas. Por favor, escolha uma data futura.' 
+        mensagem: 'Os ensaios devem ser agendados com no mínimo 3 dias de antecedência para planejamento estratégico da equipe. Por favor, escolha uma data posterior.' 
       });
     }
 
@@ -70,6 +75,7 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       });
     }
 
+    // 🕒 LISTA DE HORÁRIOS PERMITIDOS (Último início às 15:00 para encerrar impreterivelmente às 19:00)
     const horariosPossiveis = ['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00'];
 
     // 🔹 CORREÇÃO 3: Ignora ensaios 'Cancelado' e 'Concluído' para liberar os blocos de horários na grade
@@ -86,15 +92,16 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     const horariosDisponiveis = horariosPossiveis.filter(horario => {
       const [h, m] = horario.split(':').map(Number);
       const inicioProposto = h * 60 + m;
-      const fimProposto = inicioProposto + 240; 
+      const fimProposto = inicioProposto + 240; // 4 horas de ensaio
 
+      // Trava de segurança no algoritmo: rejeita se passar das 19h (19 * 60 = 1140 minutos)
       if (fimProposto > 19 * 60) return false;
 
       for (let ensaio of ensaiosExistentes.rows) {
         const [hIn, mIn] = ensaio.hora_inicio.split(':').map(Number);
         const [hFim, mFim] = ensaio.hora_fim.split(':').map(Number);
         const ensaioInicio = hIn * 60 + mIn;
-        const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120; 
+        const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120; // +2h deslocamento
 
         if (inicioProposto < ensaioFimComDeslocamento && fimProposto + 120 > ensaioInicio) return false;
       }
