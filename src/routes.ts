@@ -75,8 +75,12 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       });
     }
 
-    // 🕒 LISTA DE HORÁRIOS PERMITIDOS (Último início às 15:00 para encerrar impreterivelmente às 19:00)
-    const horariosPossiveis = ['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00'];
+// 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
+    const horariosPossiveis = [
+      '07:00', '08:00', '09:00', '10:00', '11:00', 
+      '12:00', '13:00', '14:00', '15:00', '16:00', 
+      '17:00', '18:00', '19:00'
+    ];
 
     // 🔹 CORREÇÃO 3: Ignora ensaios 'Cancelado' e 'Concluído' para liberar os blocos de horários na grade
     const ensaiosExistentes = await pool.query(
@@ -94,8 +98,8 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       const inicioProposto = h * 60 + m;
       const fimProposto = inicioProposto + 240; // 4 horas de ensaio
 
-      // Trava de segurança no algoritmo: rejeita se passar das 19h (19 * 60 = 1140 minutos)
-      if (fimProposto > 19 * 60) return false;
+      // 🔥 CORREÇÃO DA TRAVA: Garante que o último INÍCIO permitido seja as 19h (19 * 60 = 1140 minutos)
+      if (inicioProposto > 19 * 60) return false;
 
       for (let ensaio of ensaiosExistentes.rows) {
         const [hIn, mIn] = ensaio.hora_inicio.split(':').map(Number);
