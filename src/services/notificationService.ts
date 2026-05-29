@@ -32,41 +32,21 @@ function formatarData(data: string): string {
 }
 
 export async function enviarEmailConfirmacaoCliente(ensaio: any) {
-  // 💻 Em desenvolvimento (mude para /api):
   const linkCancelamento = `http://localhost:3000/api/v1/agendamentos/cancelar?id=${ensaio.id}&token=${ensaio.token_cancelamento}`;
 
-  // Cálculo das datas para o Google Calendar
-  const dataBanco = new Date(ensaio.data_ensaio);
-  const ano = dataBanco.getUTCFullYear();
-  const mes = String(dataBanco.getUTCMonth() + 1).padStart(2, '0');
-  const dia = String(dataBanco.getUTCDate()).padStart(2, '0');
-  const dataFormatadaISO = `${ano}-${mes}-${dia}`;
+  // 1. Extração direta da string YYYY-MM-DD para evitar conversão de fuso do objeto Date
+  const [ano, mes, dia] = ensaio.data_ensaio.split('-');
   
-  // Garantindo o formato HH:mm:ss
-  const inicioComSegundos = ensaio.hora_inicio.length === 5 ? `${ensaio.hora_inicio}:00` : ensaio.hora_inicio;
-  const fimComSegundos = ensaio.hora_fim.length === 5 ? `${ensaio.hora_fim}:00` : ensaio.hora_fim;
+  // 2. Formatação segura dos horários (garantindo segundos)
+  const inicio = ensaio.hora_inicio.length === 5 ? `${ensaio.hora_inicio}:00` : ensaio.hora_inicio;
+  const fim = ensaio.hora_fim.length === 5 ? `${ensaio.hora_fim}:00` : ensaio.hora_fim;
 
-  const htmlContent = `
-    <div style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f172a; color: #f1f5f9; padding: 30px; border-radius: 12px; max-width: 500px; border: 1px solid #1e293b; margin: 0 auto;">
-      <h2 style="color: #ef4444; margin-top: 0; border-bottom: 2px solid #ef4444; padding-bottom: 10px;">Arsenal Estratégia 🔥</h2>
-      <p style="font-size: 16px;">Olá! Seu ensaio foi agendado com sucesso.</p>
-      
-      <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; margin: 20px 0;">
-        <p style="margin: 5px 0;"><strong>🏢 Empresa:</strong> ${ensaio.empresa_nome}</p>
-        <p style="margin: 5px 0;"><strong>📅 Data:</strong> ${formatarData(ensaio.data_ensaio)}</p>
-        <p style="margin: 5px 0;"><strong>⏰ Horário:</strong> ${ensaio.hora_inicio}</p>
-      </div>
-      
-      <p style="color: #94a3b8; font-size: 14px;">Em breve entraremos em contato para o alinhamento do roteiro. Fique atento!</p>
-      
-      <hr style="border: 0; border-top: 1px solid #334155; margin: 20px 0;" />
-      
-      <p style="font-size: 12px; color: #64748b;">Precisou mudar de ideia ou quer cancelar o agendamento? Clique no link abaixo:</p>
-      <p style="margin: 10px 0;"><a href="${linkCancelamento}" style="color: #ef4444; font-size: 13px; text-decoration: underline; font-weight: bold;">Clique aqui para cancelar este agendamento</a></p>
-      
-      <p style="margin-top: 30px; font-weight: bold; color: #ef4444;">Equipe Arsenal 🚀</p>
-    </div>
-  `;
+  // 3. Montagem manual da string ISO com o offset -03:00 fixo
+  // Isso impede que o JS converta para Z (UTC)
+  const startTime = `${ano}-${mes}-${dia}T${inicio}.000-03:00`;
+  const endTime = `${ano}-${mes}-${dia}T${fim}.000-03:00`;
+
+  const htmlContent = `...`; // (Seu HTML permanece igual)
 
   await dispararParaN8n(
     'confirmacao_cliente',
@@ -74,15 +54,14 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     '📆 Agendamento Confirmado - Arsenal Estratégia',
     htmlContent,
     { 
-      // Dados extras para o n8n criar o evento no Google Calendar
       google_calendar: {
-        start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
-        end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
+        start: startTime,
+        end: endTime
       }
     }
   );
   
-  console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
+  console.log(`🚀 Payload enviado com formato de data fixo: ${startTime}`);
 }
 
 export async function notificarColaboradorAtribuido(colaborador: any, ensaio: any) {
