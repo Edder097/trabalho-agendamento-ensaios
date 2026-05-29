@@ -3,20 +3,37 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// ✅ Usando 'function' tradicional para garantir o hoisting no escopo do arquivo
+function formatarData(data: string): string {
+  const d = new Date(data);
+  return isNaN(d.getTime()) ? data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT),
-  secure: true, 
+  port: Number(process.env.EMAIL_PORT), // Certifique-se de que está 587 na Render
+  secure: false, // Obrigatório para 587
+  
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+
+  // ⚡ Força o Nodemailer a usar STARTTLS explicitamente
+  requireTLS: true, 
+
+  tls: {
+    // 🛡️ Não rejeita se o certificado da HostGator for autoassinado/compartilhado
+    rejectUnauthorized: false 
+  },
+
+  // ⏳ Configurações estritas de timeout para redes instáveis de produção
+  connectionTimeout: 20000,  // 20 segundos para abrir a conexão
+  greetingTimeout: 20000,    // 20 segundos para aguardar o "boas-vindas" do SMTP
+  socketTimeout: 30000,      // 30 segundos de inatividade tolerada
 });
 
-const formatarData = (data: string) => {
-  const d = new Date(data);
-  return isNaN(d.getTime()) ? data : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-};
+// ... resto das suas funções de envio de e-mail (enviarEmailConfirmacaoCliente, etc)
 
 export async function enviarEmailConfirmacaoCliente(ensaio: any) {
   // 💻 Em desenvolvimento (mude para /api):
