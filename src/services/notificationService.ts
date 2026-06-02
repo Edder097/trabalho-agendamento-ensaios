@@ -74,6 +74,7 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     '📆 Agendamento Confirmado - Arsenal Estratégia',
     htmlContent,
     { 
+      contato_telefone: ensaio.contato_telefone, // 👈 adiciona isso
       google_calendar: {
         start: `[DateTime: ${dataFormatadaISO}T${inicioComSegundos}-03:00]`,
         end: `[DateTime: ${dataFormatadaISO}T${fimComSegundos}-03:00]`
@@ -81,8 +82,8 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     }
   );
   
-  console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
-}
+    console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
+  }
 
 export async function notificarColaboradorAtribuido(colaborador: any, ensaio: any) {
   const htmlContent = `
