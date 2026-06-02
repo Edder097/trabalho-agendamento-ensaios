@@ -32,15 +32,19 @@ function formatarData(data: string): string {
 }
 
 export async function enviarEmailConfirmacaoCliente(ensaio: any) {
-  // 💻 Em desenvolvimento (mude para /api):
-  const linkCancelamento = `http://localhost:3000/api/v1/agendamentos/cancelar?id=${ensaio.id}&token=${ensaio.token_cancelamento}`;
+  // 🌍 ANÁLISE DE PRODUÇÃO: Substitua pelo domínio real da sua API no painel da Render 
+  // Configurando a variável de ambiente BASE_URL lá, você não precisa mexer no código toda vez que mudar de servidor.
+  const baseUrl = process.env.BASE_URL || 'https://seu-app.onrender.com';
+  const linkCancelamento = `${baseUrl}/api/v1/agendamentos/cancelar?id=${ensaio.id}&token=${ensaio.token_cancelamento}`;
 
-  // Cálculo das datas para o Google Calendar
-  const dataBanco = new Date(ensaio.data_ensaio);
-  const ano = dataBanco.getUTCFullYear();
-  const mes = String(dataBanco.getUTCMonth() + 1).padStart(2, '0');
-  const dia = String(dataBanco.getUTCDate()).padStart(2, '0');
-  const dataFormatadaISO = `${ano}-${mes}-${dia}`;
+  // 🛡️ CORREÇÃO BLINDADA DO UTC: 
+  // Se o banco retornar um Objeto Date ou String, convertemos para ISO string e isolamos o YYYY-MM-DD puro.
+  // Isso impede que o Node mude o dia do ensaio por conta do fuso horário do servidor da Render.
+  const dataString = ensaio.data_ensaio instanceof Date 
+    ? ensaio.data_ensaio.toISOString().split('T')[0] 
+    : String(ensaio.data_ensaio).split('T')[0];
+
+  const [ano, mes, dia] = dataString.split('-');
   
   // Garantindo o formato HH:mm:ss
   const inicioComSegundos = ensaio.hora_inicio.length === 5 ? `${ensaio.hora_inicio}:00` : ensaio.hora_inicio;
@@ -68,29 +72,30 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     </div>
   `;
 
-await dispararParaN8n(
-  'confirmacao_cliente',
-  ensaio.email_cliente,
-  '📆 Agendamento Confirmado - Arsenal Estratégia',
-  htmlContent,
-  { 
-    contato_telefone: ensaio.contato_telefone,
-    empresa_nome: ensaio.empresa_nome,
-    contato_nome: ensaio.contato_nome,
-    data_formatada: formatarData(ensaio.data_ensaio),
-    hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
-    hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
-    objetivos: ensaio.objetivos,
-    id_ensaio: ensaio.id,
-    google_calendar: {
-      start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
-      end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
+  await dispararParaN8n(
+    'confirmacao_cliente',
+    ensaio.email_cliente,
+    '📆 Agendamento Confirmado - Arsenal Estratégia',
+    htmlContent,
+    { 
+      contato_telefone: ensaio.contato_telefone,
+      empresa_nome: ensaio.empresa_nome,
+      contato_nome: ensaio.contato_nome,
+      data_formatada: formatarData(ensaio.data_ensaio),
+      hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
+      hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
+      objetivos: ensaio.objetivos,
+      id_ensaio: ensaio.id,
+      link_cancelamento: linkCancelamento, // 🔹 ADICIONADO: Link mapeado para o seu n8n usar no WhatsApp/Email
+      google_calendar: {
+        start: `${ano}-${mes}-${dia}T${inicioComSegundos}-03:00`, // Formato exato pronto para o Calendar
+        end: `${ano}-${mes}-${dia}T${fimComSegundos}-03:00`
+      }
     }
-  }
-);
+  );
   
-    console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
-  }
+  console.log(`🚀 Payload completo enviado para o n8n (Destino: ${ensaio.email_cliente})`);
+}
 
 export async function notificarColaboradorAtribuido(colaborador: any, ensaio: any) {
   const htmlContent = `
