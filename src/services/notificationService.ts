@@ -74,7 +74,12 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     '📆 Agendamento Confirmado - Arsenal Estratégia',
     htmlContent,
     { 
-      contato_telefone: ensaio.contato_telefone, // 👈 adiciona isso
+      contato_telefone: ensaio.contato_telefone,
+      empresa_nome: ensaio.empresa_nome,
+      contato_nome: ensaio.contato_nome,
+      hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
+      hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
+      objetivos: ensaio.objetivos,
       google_calendar: {
         start: `[DateTime: ${dataFormatadaISO}T${inicioComSegundos}-03:00]`,
         end: `[DateTime: ${dataFormatadaISO}T${fimComSegundos}-03:00]`
