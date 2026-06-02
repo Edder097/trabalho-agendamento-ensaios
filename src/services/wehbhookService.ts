@@ -38,13 +38,20 @@ export async function enviarParaN8n(dados: DadosWebhookEnsaio) {
   try {
     const eventoFinal = dados.evento || (statusStr.includes('CANCEL') ? 'ENSAIO_CANCELADO' : 'ensaio.agendado');
     
-    await axios.post(url, {
-      ...dados,
-      evento: eventoFinal,
-      data_formatada: dados.data_ensaio ? new Date(dados.data_ensaio).toLocaleDateString('pt-BR') : '',
-      hora_inicio_curta: dados.hora_inicio ? dados.hora_inicio.substring(0, 5) : '',
-      hora_fim_curta: dados.hora_fim ? dados.hora_fim.substring(0, 5) : ''
-    });
+  await axios.post(url, {
+    ...dados,
+    evento: eventoFinal,
+    data_formatada: dados.data_ensaio ? new Date(dados.data_ensaio).toLocaleDateString('pt-BR') : '',
+    hora_inicio_curta: dados.hora_inicio ? dados.hora_inicio.substring(0, 5) : '',
+    hora_fim_curta: dados.hora_fim ? dados.hora_fim.substring(0, 5) : '',
+    // 👇 Adiciona isso aqui
+    calendar_start: dados.data_ensaio && dados.hora_inicio 
+      ? `${dados.data_ensaio.substring(0, 10)}T${dados.hora_inicio}-03:00` 
+      : '',
+    calendar_end: dados.data_ensaio && dados.hora_fim 
+      ? `${dados.data_ensaio.substring(0, 10)}T${dados.hora_fim}-03:00` 
+      : ''
+  });
 
     console.log(`✅ [Webhook n8n] Enviado com sucesso para: ${url}`);
   } catch (error: any) {
