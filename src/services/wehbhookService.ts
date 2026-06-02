@@ -26,6 +26,7 @@ export async function enviarParaN8n(dados: DadosWebhookEnsaio) {
 
   let url = process.env.N8N_WHATSAPP_WEBHOOK_URL;
 
+  // 1. Identifica se é cancelamento e joga para o webhook certo
   if (eventoStr.includes('CANCEL') || statusStr.includes('CANCEL')) {
     url = 'https://n8n-new.arsenalestrategia.com.br/webhook/cancel-agend';
   }
@@ -38,20 +39,36 @@ export async function enviarParaN8n(dados: DadosWebhookEnsaio) {
   try {
     const eventoFinal = dados.evento || (statusStr.includes('CANCEL') ? 'ENSAIO_CANCELADO' : 'ensaio.agendado');
     
-  await axios.post(url, {
-    ...dados,
-    evento: eventoFinal,
-    data_formatada: dados.data_ensaio ? new Date(dados.data_ensaio).toLocaleDateString('pt-BR') : '',
-    hora_inicio_curta: dados.hora_inicio ? dados.hora_inicio.substring(0, 5) : '',
-    hora_fim_curta: dados.hora_fim ? dados.hora_fim.substring(0, 5) : '',
-    // 👇 Adiciona isso aqui
-    calendar_start: dados.data_ensaio && dados.hora_inicio 
-      ? `${dados.data_ensaio.substring(0, 10)}T${dados.hora_inicio}-03:00` 
-      : '',
-    calendar_end: dados.data_ensaio && dados.hora_fim 
-      ? `${dados.data_ensaio.substring(0, 10)}T${dados.hora_fim}-03:00` 
-      : ''
-  });
+    // 2. Tratamento da data corrigido para o TypeScript aceitar sem reclamar
+    let dataPura = '';
+    let dataFormatadaBR = '';
+    
+    if (dados.data_ensaio) {
+      const dataRaw = dados.data_ensaio as any; // Ignora o check estrito do TS aqui
+      
+      // Se for um objeto Date real, usa toISOString, se não, trata como string pura
+      dataPura = typeof dataRaw.toISOString === 'function'
+        ? dataRaw.toISOString().split('T')[0] 
+        : String(dataRaw).split('T')[0];
+      
+      const [ano, mes, dia] = dataPura.split('-');
+      dataFormatadaBR = `${dia}/${mes}/${ano}`; // Mantém o formato padrão BR pro seu n8n
+    }
+
+    // 3. Garante que o horário vai com segundos para o Google Calendar
+    const inicioComSegundos = dados.hora_inicio?.length === 5 ? `${dados.hora_inicio}:00` : dados.hora_inicio;
+    const fimComSegundos = dados.hora_fim?.length === 5 ? `${dados.hora_fim}:00` : dados.hora_fim;
+
+    await axios.post(url, {
+      ...dados,
+      evento: eventoFinal,
+      data_formatada: dataFormatadaBR,
+      hora_inicio_curta: dados.hora_inicio ? dados.hora_inicio.substring(0, 5) : '',
+      hora_fim_curta: dados.hora_fim ? dados.hora_fim.substring(0, 5) : '',
+      // Envia as datas blindadas contra o fuso horário da Render
+      calendar_start: dataPura && dados.hora_inicio ? `${dataPura}T${inicioComSegundos}-03:00` : '',
+      calendar_end: dataPura && dados.hora_fim ? `${dataPura}T${fimComSegundos}-03:00` : ''
+    });
 
     console.log(`✅ [Webhook n8n] Enviado com sucesso para: ${url}`);
   } catch (error: any) {
