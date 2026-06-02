@@ -74,10 +74,9 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     '📆 Agendamento Confirmado - Arsenal Estratégia',
     htmlContent,
     { 
-      // Dados extras para o n8n criar o evento no Google Calendar
       google_calendar: {
-        start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
-        end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
+        start: `[DateTime: ${dataFormatadaISO}T${inicioComSegundos}-03:00]`,
+        end: `[DateTime: ${dataFormatadaISO}T${fimComSegundos}-03:00]`
       }
     }
   );
