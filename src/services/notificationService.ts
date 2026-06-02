@@ -68,25 +68,26 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
     </div>
   `;
 
-  await dispararParaN8n(
-    'confirmacao_cliente',
-    ensaio.email_cliente,
-    '📆 Agendamento Confirmado - Arsenal Estratégia',
-    htmlContent,
-    { 
-      contato_telefone: ensaio.contato_telefone,
-      empresa_nome: ensaio.empresa_nome,
-      contato_nome: ensaio.contato_nome,
-      data_formatada: formatarData(ensaio.data_ensaio),
-      hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
-      hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
-      objetivos: ensaio.objetivos,
-      google_calendar: {
-        start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
-        end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
-      }
+await dispararParaN8n(
+  'confirmacao_cliente',
+  ensaio.email_cliente,
+  '📆 Agendamento Confirmado - Arsenal Estratégia',
+  htmlContent,
+  { 
+    contato_telefone: ensaio.contato_telefone,
+    empresa_nome: ensaio.empresa_nome,
+    contato_nome: ensaio.contato_nome,
+    data_formatada: formatarData(ensaio.data_ensaio),
+    hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
+    hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
+    objetivos: ensaio.objetivos,
+    id_ensaio: ensaio.id,
+    google_calendar: {
+      start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
+      end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
     }
-  );
+  }
+);
   
     console.log(`🚀 Payload de confirmação + Calendar enviado para o n8n (Destino: ${ensaio.email_cliente})`);
   }
