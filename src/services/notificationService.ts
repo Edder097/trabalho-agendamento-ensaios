@@ -77,6 +77,7 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
       contato_telefone: ensaio.contato_telefone,
       empresa_nome: ensaio.empresa_nome,
       contato_nome: ensaio.contato_nome,
+      data_formatada: formatarData(ensaio.data_ensaio),
       hora_inicio_formatada: ensaio.hora_inicio.substring(0, 5),
       hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
       objetivos: ensaio.objetivos,
