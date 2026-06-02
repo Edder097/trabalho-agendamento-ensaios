@@ -82,8 +82,8 @@ export async function enviarEmailConfirmacaoCliente(ensaio: any) {
       hora_fim_formatada: ensaio.hora_fim.substring(0, 5),
       objetivos: ensaio.objetivos,
       google_calendar: {
-        start: `[DateTime: ${dataFormatadaISO}T${inicioComSegundos}-03:00]`,
-        end: `[DateTime: ${dataFormatadaISO}T${fimComSegundos}-03:00]`
+        start: `${dataFormatadaISO}T${inicioComSegundos}-03:00`,
+        end: `${dataFormatadaISO}T${fimComSegundos}-03:00`
       }
     }
   );
