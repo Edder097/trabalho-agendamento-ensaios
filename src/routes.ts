@@ -338,9 +338,9 @@ router.get('/painel/ensaios', async (req, res) => {
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
              TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
              hora_inicio, hora_fim, status,
-             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel 
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             motivo_cancelamento
       FROM ensaios 
-      WHERE status != 'Cancelado'
       ORDER BY data_ensaio ASC, hora_inicio ASC
     `;
     const resultado = await pool.query(query);
