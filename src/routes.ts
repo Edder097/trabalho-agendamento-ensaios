@@ -322,6 +322,60 @@ router.patch('/ensaios/:id/cancelar', executarCancelamentoEnsaio);
 // ROTAS DO PAINEL OPERACIONAL
 // ==========================================
 
+// 🚀 NOVA ROTA 1: LOGIN / AUTENTICAÇÃO DA EQUIPE
+router.post('/painel/auth/login', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
+
+    const buscaUsuario = await pool.query(
+      'SELECT id, nome, email FROM equipe WHERE LOWER(email) = LOWER($1)',
+      [email.trim()]
+    );
+
+    if (buscaUsuario.rowCount === 0) {
+      return res.status(404).json({ error: 'Colaborador não encontrado no sistema.' });
+    }
+
+    return res.json(buscaUsuario.rows[0]);
+  } catch (error) {
+    console.error('❌ Erro no login da equipe:', error);
+    return res.status(500).json({ error: 'Erro interno ao realizar login.' });
+  }
+});
+
+// 🚀 NOVA ROTA 2: BUSCAR APENAS OS ENSAIOS DO COLABORADOR LOGADO
+router.get('/painel/meus-ensaios', async (req, res) => {
+  try {
+    const { nomeColaborador } = req.query;
+
+    if (!nomeColaborador) {
+      return res.status(400).json({ error: 'Nome do colaborador é obrigatório para filtrar.' });
+    }
+
+    const query = `
+      SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
+             TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
+             hora_inicio, hora_fim, status,
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
+      FROM ensaios 
+      WHERE fotografo_responsavel = $1 
+         OR roteirista_responsavel = $1 
+         OR auxiliar_responsavel = $1
+      ORDER BY data_ensaio ASC, hora_inicio ASC
+    `;
+    
+    const resultado = await pool.query(query, [String(nomeColaborador).trim()]);
+    return res.json(resultado.rows);
+  } catch (error) {
+    console.error('❌ Erro ao buscar ensaios do colaborador:', error);
+    return res.status(500).json({ error: 'Erro ao buscar seus ensaios.' });
+  }
+});
+
+// 🔹 SEUS CÓDIGOS ORIGINAIS CONTINUAM ABAIXO IGUAIS:
+
 router.get('/painel/equipe', async (req, res) => {
   try {
     const resultado = await pool.query('SELECT * FROM equipe ORDER BY nome ASC');
@@ -379,48 +433,48 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
         return res.status(404).json({ error: 'Ensaio não encontrado.' });
       }
 
-const ensaioCancelado = resultado.rows[0];
+      const ensaioCancelado = resultado.rows[0];
 
-  // Busca email e telefone da equipe alocada neste ensaio
-  let dadosFotografo  = { email: '', telefone: '' };
-  let dadosRoteirista = { email: '', telefone: '' };
-  let dadosAuxiliar   = { email: '', telefone: '' };
+      // Busca email e telefone da equipe alocada neste ensaio
+      let dadosFotografo  = { email: '', telefone: '' };
+      let dadosRoteirista = { email: '', telefone: '' };
+      let dadosAuxiliar   = { email: '', telefone: '' };
 
-  const nomesResponsaveis = [
-    ensaioCancelado.fotografo_responsavel,
-    ensaioCancelado.roteirista_responsavel,
-    ensaioCancelado.auxiliar_responsavel
-  ].filter(nome => nome && nome.trim() !== '');
+      const nomesResponsaveis = [
+        ensaioCancelado.fotografo_responsavel,
+        ensaioCancelado.roteirista_responsavel,
+        ensaioCancelado.auxiliar_responsavel
+      ].filter(nome => nome && nome.trim() !== '');
 
-  if (nomesResponsaveis.length > 0) {
-    const buscaEquipe = await pool.query(
-      'SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)',
-      [nomesResponsaveis]
-    );
-    buscaEquipe.rows.forEach(colaborador => {
-      if (colaborador.nome === ensaioCancelado.fotografo_responsavel)  dadosFotografo  = colaborador;
-      if (colaborador.nome === ensaioCancelado.roteirista_responsavel) dadosRoteirista = colaborador;
-      if (colaborador.nome === ensaioCancelado.auxiliar_responsavel)   dadosAuxiliar   = colaborador;
-    });
-  }
+      if (nomesResponsaveis.length > 0) {
+        const buscaEquipe = await pool.query(
+          'SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)',
+          [nomesResponsaveis]
+        );
+        buscaEquipe.rows.forEach(colaborador => {
+          if (colaborador.nome === ensaioCancelado.fotografo_responsavel)  dadosFotografo  = colaborador;
+          if (colaborador.nome === ensaioCancelado.roteirista_responsavel) dadosRoteirista = colaborador;
+          if (colaborador.nome === ensaioCancelado.auxiliar_responsavel)   dadosAuxiliar   = colaborador;
+        });
+      }
 
-  try {
-    await enviarParaN8n({
-      ...ensaioCancelado,
-      evento: 'ENSAIO_CANCELADO',
-      fotografo_email:     dadosFotografo.email    || '',
-      fotografo_telefone:  formatarTelefoneWhatsapp(dadosFotografo.telefone),
-      roteirista_email:    dadosRoteirista.email   || '',
-      roteirista_telefone: formatarTelefoneWhatsapp(dadosRoteirista.telefone),
-      auxiliar_email:      dadosAuxiliar.email     || '',
-      auxiliar_telefone:   formatarTelefoneWhatsapp(dadosAuxiliar.telefone)
-    } as any);
-  } catch (n8nErr: any) {
-    console.error('⚠️ Falha n8n no cancelamento:', n8nErr.message);
-  }
+      try {
+        await enviarParaN8n({
+          ...ensaioCancelado,
+          evento: 'ENSAIO_CANCELADO',
+          fotografo_email:     dadosFotografo.email    || '',
+          fotografo_telefone:  formatarTelefoneWhatsapp(dadosFotografo.telefone),
+          roteirista_email:    dadosRoteirista.email   || '',
+          roteirista_telefone: formatarTelefoneWhatsapp(dadosRoteirista.telefone),
+          auxiliar_email:      dadosAuxiliar.email     || '',
+          auxiliar_telefone:   formatarTelefoneWhatsapp(dadosAuxiliar.telefone)
+        } as any);
+      } catch (n8nErr: any) {
+        console.error('⚠️ Falha n8n no cancelamento:', n8nErr.message);
+      }
 
-  return res.json({ message: 'Ensaio cancelado com sucesso.', ensaio: ensaioCancelado });
-}
+      return res.json({ message: 'Ensaio cancelado com sucesso.', ensaio: ensaioCancelado });
+    }
 
     // =============================================
     // CASO 2: CONCLUSÃO
@@ -438,10 +492,35 @@ const ensaioCancelado = resultado.rows[0];
       return res.json({ message: 'Ensaio concluído!', ensaio: resultado.rows[0] });
     }
 
+// =============================================
+    // CASO 3: ESCALAÇÃO DE EQUIPE OU ATUALIZAÇÃO DE LINKS (PANEIS OPERACIONAIS)
     // =============================================
-    // CASO 3: ESCALAÇÃO DE EQUIPE
-    // Só aqui valida os campos obrigatórios
-    // =============================================
+    const ensaioAtual = await pool.query('SELECT * FROM ensaios WHERE id = $1', [id]);
+    if (ensaioAtual.rowCount === 0) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+
+    // Se a requisição veio dos painéis operacionais (apenas atualizando links), processa direto:
+    const { link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares } = req.body;
+    const ehAtualizacaoDeLinks = link_roteiro !== undefined || link_arquivos_ensaio !== undefined || link_materiais_auxiliares !== undefined;
+
+    if (ehAtualizacaoDeLinks) {
+      const queryUpdateLinks = `
+        UPDATE ensaios 
+        SET 
+          link_roteiro = COALESCE($1, link_roteiro),
+          link_arquivos_ensaio = COALESCE($2, link_arquivos_ensaio),
+          link_materiais_auxiliares = COALESCE($3, link_materiais_auxiliares)
+        WHERE id = $4 RETURNING *
+      `;
+      const resultadoLinks = await pool.query(queryUpdateLinks, [
+        link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares, id
+      ]);
+
+      return res.json({ message: 'Links do ensaio atualizados com sucesso!', ensaio: resultadoLinks.rows[0] });
+    }
+
+    // Se NÃO for atualização de links, significa que é a escalação do CS. Aí sim aplicamos a trava:
     if (
       !fotografo_responsavel || fotografo_responsavel.trim() === '' ||
       !roteirista_responsavel || roteirista_responsavel.trim() === '' ||
@@ -450,11 +529,6 @@ const ensaioCancelado = resultado.rows[0];
       return res.status(400).json({
         error: 'Ação bloqueada: Você precisa selecionar todos os encarregados (Fotógrafo, Roteirista e Auxiliar) antes de salvar.'
       });
-    }
-
-    const ensaioAtual = await pool.query('SELECT * FROM ensaios WHERE id = $1', [id]);
-    if (ensaioAtual.rowCount === 0) {
-      return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
     const novoStatus = status !== undefined ? status : ensaioAtual.rows[0].status;
@@ -468,6 +542,8 @@ const ensaioCancelado = resultado.rows[0];
       novoStatus, fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel, id
     ]);
     const ensaioAtualizado = resultado.rows[0];
+
+    // ... (Mantém o restante do seu código de busca da equipe e envio do Webhook de Atribuição igualzinho!)
 
     const nomesEquipe = [fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel];
     let dadosFotografo  = { email: '', telefone: '' };
