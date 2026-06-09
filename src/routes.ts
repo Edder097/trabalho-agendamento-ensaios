@@ -9,7 +9,38 @@ import {
 import { enviarParaN8n } from './services/wehbhookService.js'; 
 import crypto from 'crypto';
 
+// 📦 NOVOS IMPORTS PARA FAZER O UPLOAD PRO CLOUDFLARE R2
+import multer from 'multer';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+
 const router = Router();
+
+// ==========================================
+// CONFIGURAÇÃO DO CLOUDFLARE R2 (S3 API)
+// ==========================================
+const s3Client = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
+
+// Configura o Multer para pegar o arquivo direto da memória RAM (Ideal para o Render)
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // Limita o PDF a 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos PDF são permitidos!'));
+    }
+  }
+});
+
 
 // ==========================================
 // ROTAS DO CLIENTE (PÚBLICAS)
@@ -75,7 +106,7 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       });
     }
 
-// 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
+    // 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
     const horariosPossiveis = [
       '07:00', '08:00', '09:00', '10:00', '11:00', 
       '12:00', '13:00', '14:00', '15:00', '16:00', 
@@ -167,7 +198,7 @@ router.post('/agenda/agendar', async (req, res) => {
       hora_fim: ensaioCriado.hora_fim,
       objetivos: ensaioCriado.objetivos,
       status: 'Agendado',
-      link_cancelamento: linkCancelamento // 🔹 Pronto para o n8n antigo pescar!
+      link_cancelamento: linkCancelamento
     });
 
     return res.status(201).json({
@@ -268,7 +299,7 @@ router.put('/admin/ensaios/:id', async (req, res) => {
 // =========================================================================
 // CONTROLLER DE CANCELAMENTO COMPARTILHADO (ADMIN / FILMMAKER / GENÉRICO)
 // =========================================================================
-const executarCancelamentoEnsaio = async (req: any, res: any) => {
+const ejecutarCancelamentoEnsaio = async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const motivo = req.body.motivo_cancelamento || req.body.motivo;
@@ -277,7 +308,6 @@ const executarCancelamentoEnsaio = async (req: any, res: any) => {
       return res.status(400).json({ error: 'O motivo do cancelamento é obrigatório.' });
     }
     
-    // 1. Atualiza o banco de dados
     const ensaioCancelado = await pool.query(
       `UPDATE ensaios SET status = 'Cancelado', motivo_cancelamento = $1 WHERE id = $2 RETURNING *`,
       [motivo.trim(), id]
@@ -290,14 +320,13 @@ const executarCancelamentoEnsaio = async (req: any, res: any) => {
     const ensaio = ensaioCancelado.rows[0];
     console.log(`✅ [Cancelamento] Ensaio ID ${id} cancelado com sucesso no banco.`);
 
-    // 2. Dispara para o n8n de forma isolada
     try {
       await enviarParaN8n({
         ...ensaio,
         evento: 'ENSAIO_CANCELADO'
       });
     } catch (n8nErr: any) {
-      console.error('⚠️ Falha no n8n, mas o banco foi atualizado:', n8nErr.message);
+      console.error('⚠️ Falha no n8n, mas o banco foi updated:', n8nErr.message);
     }
 
     return res.json({ message: 'Ensaio cancelado com sucesso.', ensaio });
@@ -308,15 +337,12 @@ const executarCancelamentoEnsaio = async (req: any, res: any) => {
   }
 };
 
-// 🔹 Vincula a função a todas as variantes possíveis que o front-end pode estar chamando
-router.put('/admin/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/admin/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-
-router.put('/filmmaker/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/filmmaker/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-
-router.put('/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/ensaios/:id/cancelar', executarCancelamentoEnsaio);
+router.put('/admin/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/admin/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.put('/filmmaker/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/filmmaker/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.put('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
 
 // ==========================================
 // ROTAS DO PAINEL OPERACIONAL
@@ -374,7 +400,59 @@ router.get('/painel/meus-ensaios', async (req, res) => {
   }
 });
 
-// 🔹 SEUS CÓDIGOS ORIGINAIS CONTINUAM ABAIXO IGUAIS:
+// 🚀 NOVA ROTA 3: UPLOAD AUTOMÁTICO DE ROTEIRO (PDF) PARA O CLOUDFLARE R2
+router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'Nenhum arquivo de roteiro enviado.' });
+    }
+
+    // Cria um nome totalmente único para rastreamento interno do bucket
+    const uuidUnico = crypto.randomUUID();
+    const nomeArquivo = `roteiros/${uuidUnico}-${file.originalname}`;
+
+    // Parâmetros estruturados para a API do S3/R2
+    const params = {
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: nomeArquivo,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    };
+
+    // Faz o disparo direto para o bucket da Cloudflare
+    await s3Client.send(new PutObjectCommand(params));
+
+    // Gera o endereço público de visualização nativa
+    const urlPublicaRoteiro = `${process.env.R2_PUBLIC_URL}/${nomeArquivo}`;
+
+    // Atualiza dinamicamente a coluna do banco baseando-se no ID do ensaio
+    const query = `
+      UPDATE ensaios 
+      SET link_roteiro = $1 
+      WHERE id = $2 
+      RETURNING *;
+    `;
+    
+    const resultado = await pool.query(query, [urlPublicaRoteiro, id]);
+
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: 'Ensaio não encontrado no banco de dados.' });
+    }
+
+    return res.status(200).json({
+      message: 'Roteiro enviado e vinculado com sucesso!',
+      link_roteiro: urlPublicaRoteiro,
+      ensaio: resultado.rows[0]
+    });
+
+  } catch (error: any) {
+    console.error('❌ Erro crítico no upload do roteiro:', error);
+    return res.status(500).json({ error: 'Erro interno ao processar o upload do PDF.' });
+  }
+});
 
 router.get('/painel/equipe', async (req, res) => {
   try {
