@@ -471,6 +471,7 @@ router.get('/painel/ensaios', async (req, res) => {
              TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
              hora_inicio, hora_fim, status,
              fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares,
              motivo_cancelamento
       FROM ensaios 
       ORDER BY data_ensaio ASC, hora_inicio ASC
