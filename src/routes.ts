@@ -381,16 +381,17 @@ router.get('/painel/meus-ensaios', async (req, res) => {
 
     const query = `
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
-            TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
-            hora_inicio, hora_fim, status,
-            fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
-            link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
+             TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
+             hora_inicio, hora_fim, status,
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
       FROM ensaios 
-      WHERE LOWER(fotografo_responsavel) = LOWER($1) 
-        OR LOWER(roteirista_responsavel) = LOWER($1) 
-        OR LOWER(auxiliar_responsavel) = LOWER($1)
+      WHERE fotografo_responsavel = $1 
+         OR roteirista_responsavel = $1 
+         OR auxiliar_responsavel = $1
       ORDER BY data_ensaio ASC, hora_inicio ASC
     `;
+    
     const resultado = await pool.query(query, [String(nomeColaborador).trim()]);
     return res.json(resultado.rows);
   } catch (error) {
