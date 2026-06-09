@@ -381,17 +381,16 @@ router.get('/painel/meus-ensaios', async (req, res) => {
 
     const query = `
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
-             TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
-             hora_inicio, hora_fim, status,
-             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
-             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
+            TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
+            hora_inicio, hora_fim, status,
+            fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+            link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
       FROM ensaios 
-      WHERE fotografo_responsavel = $1 
-         OR roteirista_responsavel = $1 
-         OR auxiliar_responsavel = $1
+      WHERE LOWER(fotografo_responsavel) = LOWER($1) 
+        OR LOWER(roteirista_responsavel) = LOWER($1) 
+        OR LOWER(auxiliar_responsavel) = LOWER($1)
       ORDER BY data_ensaio ASC, hora_inicio ASC
     `;
-    
     const resultado = await pool.query(query, [String(nomeColaborador).trim()]);
     return res.json(resultado.rows);
   } catch (error) {
@@ -570,7 +569,7 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       return res.json({ message: 'Ensaio concluído!', ensaio: resultado.rows[0] });
     }
 
-// =============================================
+    // =============================================
     // CASO 3: ESCALAÇÃO DE EQUIPE OU ATUALIZAÇÃO DE LINKS (PANEIS OPERACIONAIS)
     // =============================================
     const ensaioAtual = await pool.query('SELECT * FROM ensaios WHERE id = $1', [id]);
