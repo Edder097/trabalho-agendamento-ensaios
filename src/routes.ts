@@ -464,8 +464,41 @@ router.get('/painel/equipe', async (req, res) => {
   }
 });
 
+// 🚀 ROTA 2 CORRIGIDA: BUSCAR ENSAIOS DO COLABORADOR LOGADO (COM LINKS E TRATAMENTO DE TEXTO)
+router.get('/painel/meus-ensaios', async (req, res) => {
+  try {
+    const { nomeColaborador } = req.query;
+
+    if (!nomeColaborador) {
+      return res.status(400).json({ error: 'Nome do colaborador é obrigatório para filtrar.' });
+    }
+
+    // 💡 Adicionado LOWER para evitar problemas com maiúsculas/minúsculas no nome
+    const query = `
+      SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
+             TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
+             hora_inicio, hora_fim, status,
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
+      FROM ensaios 
+      WHERE LOWER(fotografo_responsavel) = LOWER($1) 
+         OR LOWER(roteirista_responsavel) = LOWER($1) 
+         OR LOWER(auxiliar_responsavel) = LOWER($1)
+      ORDER BY data_ensaio ASC, hora_inicio ASC
+    `;
+    
+    const resultado = await pool.query(query, [String(nomeColaborador).trim()]);
+    return res.json(resultado.rows);
+  } catch (error) {
+    console.error('❌ Erro ao buscar ensaios do colaborador:', error);
+    return res.status(500).json({ error: 'Erro ao buscar seus ensaios.' });
+  }
+});
+
+// 🚀 ROTA GERAL ADICIONADA: ADICIONADOS OS LINKS NO SELECT CASO O FRONT ESTEJA BATENDO AQUI
 router.get('/painel/ensaios', async (req, res) => {
   try {
+    // 💡 Agora esta rota também entrega link_roteiro, link_arquivos_ensaio e link_materiais_auxiliares
     const query = `
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
              TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
