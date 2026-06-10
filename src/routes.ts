@@ -15,116 +15,135 @@ const router = Router();
 // ROTAS DO CLIENTE (PÚBLICAS)
 // ==========================================
 
-// 1. VERIFICAR HORÁRIOS DISPONÍVEIS
-router.get('/agenda/disponibilidade', async (req, res) => {
-try {
-const { data } = req.query; 
-if (!data) return res.status(400).json({ error: 'Data é obrigatória.' });
+// 2. VERIFICAR DISPONIBILIDADE DE UM MÊS INTEIRO (EVITA EXAUSTÃO DE CONEXÕES)
+router.get('/agenda/disponibilidade-mes', async (req, res) => {
+  try {
+    const { ano, mes } = req.query; // Espera ano (YYYY) e mes (1-12)
+    if (!ano || !mes) return res.status(400).json({ error: 'Ano e mês são obrigatórios.' });
 
-const dataSelecionada = new Date(data as string);
-const diaDaSemana = dataSelecionada.getUTCDay(); 
+    const anoNum = parseInt(ano as string);
+    const mesNum = parseInt(mes as string); // Ex: 6 para Junho
 
-// 🔥 VALIDAÇÃO DOS 3 DIAS DE ANTECEDÊNCIA MÍNIMA
-const hoje = new Date();
-hoje.setHours(0, 0, 0, 0);
+    // 📅 Calcula a janela de busca no banco de dados
+    // Pegamos desde o dia anterior ao primeiro dia do mês (para a regra de limite do dia anterior)
+    const primeiroDiaMes = new Date(Date.UTC(anoNum, mesNum - 1, 1));
+    const diaAnteriorAoPrimeiroObj = new Date(primeiroDiaMes);
+    diaAnteriorAoPrimeiroObj.setUTCDate(diaAnteriorAoPrimeiroObj.getUTCDate() - 1);
+    const dataInicioBusca = diaAnteriorAoPrimeiroObj.toISOString().split('T')[0];
 
-// Define a data mínima permitida (Hoje + 3 dias)
-const dataMinimaPermitida = new Date(hoje);
-dataMinimaPermitida.setDate(dataMinimaPermitida.getDate() + 3);
+    // Descobre o último dia do mês atual
+    const ultimoDiaMesObj = new Date(Date.UTC(anoNum, mesNum, 0));
+    const dataFimBusca = ultimoDiaMesObj.toISOString().split('T')[0];
+    const totalDiasNoMes = ultimoDiaMesObj.getUTCDate();
 
-const dataComparacao = new Date(dataSelecionada.getUTCFullYear(), dataSelecionada.getUTCMonth(), dataSelecionada.getUTCDate());
+    // 🔹 CONSULTA 1: Busca TODOS os ensaios ativos do período de uma vez só
+    const ensaiosMes = await pool.query(
+      `SELECT data_ensaio::text, hora_inicio, hora_fim FROM ensaios 
+       WHERE data_ensaio >= $1 AND data_ensaio <= $2 AND status NOT IN ('Cancelado', 'Concluído')`,
+      [dataInicioBusca, dataFimBusca]
+    );
 
-if (dataComparacao < dataMinimaPermitida) {
-return res.json({ 
-permitido: false, 
-mensagem: 'Os ensaios devem ser agendados com no mínimo 3 dias de antecedência para planejamento estratégico da equipe. Por favor, escolha uma data posterior.' 
-});
-}
+    // 🔹 CONSULTA 2: Busca TODOS os bloqueios administrativos do período de uma vez só
+    const bloqueiosMes = await pool.query(
+      `SELECT data_bloqueio::text, hora_inicio, hora_fim FROM bloqueios_agenda 
+       WHERE data_bloqueio >= $1 AND data_bloqueio <= $2`,
+      [dataInicioBusca, dataFimBusca]
+    );
 
-if (diaDaSemana === 0 || diaDaSemana === 1) {
-return res.json({ 
-permitido: false, 
-mensagem: 'Para agendar neste dia, confirme disponibilidade com a equipe pelo grupo de WhatsApp da sua empresa.' 
-});
-}
+    // 🔥 VALIDAÇÃO DOS 3 DIAS DE ANTECEDÊNCIA MÍNIMA (Idêntica à sua)
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const dataMinimaPermitida = new Date(hoje);
+    dataMinimaPermitida.setDate(dataMinimaPermitida.getDate() + 3);
 
-const dataAnteriorObj = new Date(dataSelecionada);
-dataAnteriorObj.setUTCDate(dataAnteriorObj.getUTCDate() - 1);
-const dataAnterior = dataAnteriorObj.toISOString().split('T')[0];
+    // 🕒 LISTA DE HORÁRIOS PERMITIDOS
+    const horariosPossiveis = [
+      '07:00', '08:00', '09:00', '10:00', '11:00', 
+      '12:00', '13:00', '14:00', '15:00', '16:00', 
+      '17:00', '18:00', '19:00'
+    ];
 
-// 🔹 CORREÇÃO 1: Ignora ensaios 'Cancelado' e 'Concluído' no cálculo do dia anterior
-const queryAnterior = `
-     SELECT COUNT(*) FROM ensaios 
-     WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')
-   `;
-const resAnterior = await pool.query(queryAnterior, [dataAnterior]);
-const totalEnsaiosDiaAnterior = parseInt(resAnterior.rows[0].count);
+    const resultados = [];
 
-// 🔹 CORREÇÃO 2: Ignora ensaios 'Cancelado' e 'Concluído' no cálculo do dia atual
-const queryAtual = `
-     SELECT COUNT(*) FROM ensaios 
-     WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')
-   `;
-const resAtual = await pool.query(queryAtual, [data as string]);
-const totalEnsaiosDiaAtual = parseInt(resAtual.rows[0].count);
+    // Looping para processar a disponibilidade dia por dia em memória RAM (Ultra rápido)
+    for (let dia = 1; dia <= totalDiasNoMes; dia++) {
+      const diaFormatado = String(dia).padStart(2, '0');
+      const mesFormatado = String(mesNum).padStart(2, '0');
+      const dataStr = `${anoNum}-${mesFormatado}-${diaFormatado}`;
 
-if (totalEnsaiosDiaAnterior >= 2 && totalEnsaiosDiaAtual >= 1) {
-return res.json({
-permitido: false,
-mensagem: 'Agenda limitada para este dia. O limite de agendamentos foi atingido devido ao volume de produções do dia anterior para garantir o tempo de edição do Filmmaker.'
-});
-}
+      const dataSelecionada = new Date(dataStr);
+      const diaDaSemana = dataSelecionada.getUTCDay();
 
-// 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
-const horariosPossiveis = [
-'07:00', '08:00', '09:00', '10:00', '11:00', 
-'12:00', '13:00', '14:00', '15:00', '16:00', 
-'17:00', '18:00', '19:00'
-];
+      // 1. Validação da antecedência mínima de 3 dias
+      const dataComparacao = new Date(dataSelecionada.getUTCFullYear(), dataSelecionada.getUTCMonth(), dataSelecionada.getUTCDate());
+      if (dataComparacao < dataMinimaPermitida) {
+        resultados.push({ data: dataStr, vagas_disponiveis: 0 });
+        continue;
+      }
 
-// 🔹 CORREÇÃO 3: Ignora ensaios 'Cancelado' e 'Concluído' para liberar os blocos de horários na grade
-const ensaiosExistentes = await pool.query(
-`SELECT hora_inicio, hora_fim FROM ensaios WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')`,
-[data as string]
-);
+      // 2. Validação de Domingo (0) e Segunda (1)
+      if (diaDaSemana === 0 || diaDaSemana === 1) {
+        resultados.push({ data: dataStr, vagas_disponiveis: 0 });
+        continue;
+      }
 
-const bloqueiosAdm = await pool.query(
-`SELECT hora_inicio, hora_fim FROM bloqueios_agenda WHERE data_bloqueio = $1`,
-[data as string]
-);
+      // Descobre a string do dia anterior para aplicar sua regra de limite de edições
+      const dataAnteriorObj = new Date(dataSelecionada);
+      dataAnteriorObj.setUTCDate(dataAnteriorObj.getUTCDate() - 1);
+      const dataAnteriorStr = dataAnteriorObj.toISOString().split('T')[0];
 
-const horariosDisponiveis = horariosPossiveis.filter(horario => {
-const [h, m] = horario.split(':').map(Number);
-const inicioProposto = h * 60 + m;
-const fimProposto = inicioProposto + 240; // 4 horas de ensaio
+      // Filtra localmente os registros correspondentes a este dia e ao dia anterior
+      const ensaiosDiaAnterior = ensaiosMes.rows.filter(e => e.data_ensaio === dataAnteriorStr);
+      const ensaiosDiaAtual = ensaiosMes.rows.filter(e => e.data_ensaio === dataStr);
+      const bloqueiosDiaAtual = bloqueiosMes.rows.filter(b => b.data_bloqueio === dataStr);
 
-// 🔥 CORREÇÃO DA TRAVA: Garante que o último INÍCIO permitido seja as 19h (19 * 60 = 1140 minutos)
-if (inicioProposto > 19 * 60) return false;
+      // 3. Validação da sua trava de segurança (2 ensaios ontem e 1 hoje)
+      if (ensaiosDiaAnterior.length >= 2 && ensaiosDiaAtual.length >= 1) {
+        resultados.push({ data: dataStr, vagas_disponiveis: 0 });
+        continue;
+      }
 
-for (let ensaio of ensaiosExistentes.rows) {
-const [hIn, mIn] = ensaio.hora_inicio.split(':').map(Number);
-const [hFim, mFim] = ensaio.hora_fim.split(':').map(Number);
-const ensaioInicio = hIn * 60 + mIn;
-const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120; // +2h deslocamento
+      // 4. Filtra a grade horária aplicando exatamente os seus cálculos de colisão
+      const horariosDisponiveis = horariosPossiveis.filter(horario => {
+        const [h, m] = horario.split(':').map(Number);
+        const inicioProposto = h * 60 + m;
+        const fimProposto = inicioProposto + 240; // 4 horas de ensaio
 
-if (inicioProposto < ensaioFimComDeslocamento && fimProposto + 120 > ensaioInicio) return false;
-}
+        if (inicioProposto > 19 * 60) return false;
 
-for (let bloqueio of bloqueiosAdm.rows) {
-if (!bloqueio.hora_inicio) return false; 
-const [hIn, mIn] = bloqueio.hora_inicio.split(':').map(Number);
-const [hFim, mFim] = bloqueio.hora_fim.split(':').map(Number);
-if (inicioProposto < (hFim * 60 + mFim) && fimProposto > (hIn * 60 + mIn)) return false;
-}
+        // Checa choque com ensaios do dia (considerando as +2h de deslocamento)
+        for (let ensaio of ensaiosDiaAtual) {
+          const [hIn, mIn] = ensaio.hora_inicio.split(':').map(Number);
+          const [hFim, mFim] = ensaio.hora_fim.split(':').map(Number);
+          const ensaioInicio = hIn * 60 + mIn;
+          const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120;
 
-return true;
-});
+          if (inicioProposto < ensaioFimComDeslocamento && fimProposto + 120 > ensaioInicio) return false;
+        }
 
-return res.json({ permitido: true, horarios: horariosDisponiveis });
-} catch (error) {
-console.error(error);
-return res.status(500).json({ error: 'Erro interno ao calcular disponibilidade.' });
-}
+        // Checa choque com bloqueios administrativos do dia
+        for (let bloqueio of bloqueiosDiaAtual) {
+          if (!bloqueio.hora_inicio) return false;
+          const [hIn, mIn] = bloqueio.hora_inicio.split(':').map(Number);
+          const [hFim, mFim] = bloqueio.hora_fim.split(':').map(Number);
+          if (inicioProposto < (hFim * 60 + mFim) && fimProposto > (hIn * 60 + mIn)) return false;
+        }
+
+        return true;
+      });
+
+      // Se restou algum horário elegível na grade, o dia está disponível (1), senão está esgotado (0)
+      resultados.push({
+        data: dataStr,
+        vagas_disponiveis: horariosDisponiveis.length > 0 ? 1 : 0
+      });
+    }
+
+    return res.json(resultados);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro interno ao calcular disponibilidade mensal.' });
+  }
 });
 
 // 2. AGENDAR ENSAIO
