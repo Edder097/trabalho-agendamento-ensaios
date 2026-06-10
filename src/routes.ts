@@ -3,12 +3,13 @@ import { pool } from './database.js';
 import { adicionarEnsaioNaPlanilha } from './services/sheetsService.js';
 import { 
   enviarEmailConfirmacaoCliente, 
+  notificarColaboradorAtribuido, 
   enviarEmailCancelamentoInterno
 } from './services/notificationService.js';
 import { enviarParaN8n } from './services/wehbhookService.js'; 
 import crypto from 'crypto';
 
-// 📦 IMPORTS PARA O UPLOAD PRO CLOUDFLARE R2
+// 📦 NOVOS IMPORTS PARA FAZER O UPLOAD PRO CLOUDFLARE R2
 import multer from 'multer';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
@@ -26,7 +27,7 @@ const s3Client = new S3Client({
   },
 });
 
-// Configura o Multer para pegar o arquivo direto da memória RAM
+// Configura o Multer para pegar o arquivo direto da memória RAM (Ideal para o Render)
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage,
@@ -39,6 +40,7 @@ const upload = multer({
     }
   }
 });
+
 
 // ==========================================
 // ROTAS DO CLIENTE (PÚBLICAS)
@@ -57,6 +59,7 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
     
+    // Define a data mínima permitida (Hoje + 3 dias)
     const dataMinimaPermitida = new Date(hoje);
     dataMinimaPermitida.setDate(dataMinimaPermitida.getDate() + 3);
 
@@ -80,6 +83,7 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     dataAnteriorObj.setUTCDate(dataAnteriorObj.getUTCDate() - 1);
     const dataAnterior = dataAnteriorObj.toISOString().split('T')[0];
 
+    // 🔹 CORREÇÃO 1: Ignora ensaios 'Cancelado' e 'Concluído' no cálculo do dia anterior
     const queryAnterior = `
       SELECT COUNT(*) FROM ensaios 
       WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')
@@ -87,6 +91,7 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     const resAnterior = await pool.query(queryAnterior, [dataAnterior]);
     const totalEnsaiosDiaAnterior = parseInt(resAnterior.rows[0].count);
 
+    // 🔹 CORREÇÃO 2: Ignora ensaios 'Cancelado' e 'Concluído' no cálculo do dia atual
     const queryAtual = `
       SELECT COUNT(*) FROM ensaios 
       WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')
@@ -101,12 +106,14 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       });
     }
 
+    // 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
     const horariosPossiveis = [
       '07:00', '08:00', '09:00', '10:00', '11:00', 
       '12:00', '13:00', '14:00', '15:00', '16:00', 
       '17:00', '18:00', '19:00'
     ];
 
+    // 🔹 CORREÇÃO 3: Ignora ensaios 'Cancelado' e 'Concluído' para liberar os blocos de horários na grade
     const ensaiosExistentes = await pool.query(
       `SELECT hora_inicio, hora_fim FROM ensaios WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')`,
       [data as string]
@@ -120,15 +127,16 @@ router.get('/agenda/disponibilidade', async (req, res) => {
     const horariosDisponiveis = horariosPossiveis.filter(horario => {
       const [h, m] = horario.split(':').map(Number);
       const inicioProposto = h * 60 + m;
-      const fimProposto = inicioProposto + 240; 
+      const fimProposto = inicioProposto + 240; // 4 horas de ensaio
 
+      // 🔥 CORREÇÃO DA TRAVA: Garante que o último INÍCIO permitido seja as 19h (19 * 60 = 1140 minutos)
       if (inicioProposto > 19 * 60) return false;
 
       for (let ensaio of ensaiosExistentes.rows) {
         const [hIn, mIn] = ensaio.hora_inicio.split(':').map(Number);
         const [hFim, mFim] = ensaio.hora_fim.split(':').map(Number);
         const ensaioInicio = hIn * 60 + mIn;
-        const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120; 
+        const ensaioFimComDeslocamento = (hFim * 60 + mFim) + 120; // +2h deslocamento
 
         if (inicioProposto < ensaioFimComDeslocamento && fimProposto + 120 > ensaioInicio) return false;
       }
@@ -169,13 +177,16 @@ router.post('/agenda/agendar', async (req, res) => {
 
     const ensaioCriado = novoEnsaio.rows[0];
 
+    // GATILHOS DE AUTOMATIZAÇÃO PREDETERMINADOS
     adicionarEnsaioNaPlanilha(ensaioCriado);
     enviarEmailConfirmacaoCliente(ensaioCriado);
     
+    // 🔥 GERAR O LINK DE CANCELAMENTO DINÂMICO AQUI
     const protocolo = req.protocol;
     const host = req.get('host');
     const linkCancelamento = `${protocolo}://${host}/api/v1/agendamentos/cancelar?id=${ensaioCriado.id}&token=${tokenCancelamento}`;
 
+    // 🚀 DISPARO PARA O n8n (WhatsApp) COM O LINK INCLUSO
     enviarParaN8n({
       id: ensaioCriado.id,
       empresa_nome: ensaioCriado.empresa_nome,
@@ -201,89 +212,87 @@ router.post('/agenda/agendar', async (req, res) => {
 });
 
 // ==========================================
-// ROTAS ADMINISTRATIVAS (EQUIPE & ENSAIOS)
+// ROTAS ADMINISTRATIVAS
 // ==========================================
 
-// Buscar todos os ensaios (Admin) - Sem JOINs fantasmas
 router.get('/admin/ensaios', async (req, res) => {
   try {
     const { status } = req.query;
-    let query = `SELECT * FROM ensaios`;
+    let query = `
+      SELECT e.*, f.nome as filmmaker_nome, r.nome as roteirista_nome, d.nome as diretor_nome
+      FROM ensaios e
+      LEFT JOIN colaboradores f ON e.filmmaker_id = f.id
+      LEFT JOIN colaboradores r ON e.roteirista_id = r.id
+      LEFT JOIN colaboradores d ON e.diretor_id = d.id
+    `;
     const params = [];
-
     if (status) {
-      query += ` WHERE status = $1`;
+      query += ` WHERE e.status = $1`;
       params.push(status);
     }
-
-    query += ` ORDER BY data_ensaio ASC, hora_inicio ASC`;
+    query += ` ORDER BY e.data_ensaio ASC, e.hora_inicio ASC`;
     const resultado = await pool.query(query, params);
     return res.json(resultado.rows);
   } catch (error) {
-    console.error('❌ Erro ao buscar ensaios (Admin):', error);
+    console.error(error);
     return res.status(500).json({ error: 'Erro ao buscar ensaios.' });
   }
 });
 
-// Atualizar ensaio (Admin) - Salvando os nomes em formato Texto direto na tabela ensaios
+router.post('/admin/colaboradores', async (req, res) => {
+  try {
+    const { nome, funcao, telephone, email } = req.body;
+    const novoColaborador = await pool.query(
+      `INSERT INTO colaboradores (nome, funcao, telefone, email) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [nome, funcao, telephone, email]
+    );
+    return res.status(201).json(novoColaborador.rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao cadastrar colaborador.' });
+  }
+});
+
+router.get('/admin/colaboradores', async (req, res) => {
+  try {
+    const resultado = await pool.query('SELECT * FROM colaboradores ORDER BY nome ASC');
+    return res.json(resultado.rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao listar colaboradores.' });
+  }
+});
+
 router.put('/admin/ensaios/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel, status } = req.body;
+    const { filmmaker_id, roteirista_id, diretor_id, status } = req.body;
     
-    const query = `
-      UPDATE ensaios 
-      SET fotografo_responsavel = COALESCE($1, fotografo_responsavel),
-          roteirista_responsavel = COALESCE($2, roteirista_responsavel),
-          auxiliar_responsavel = COALESCE($3, auxiliar_responsavel),
-          status = COALESCE($4, status)
-      WHERE id = $5 RETURNING *
-    `;
+    const ensaioAtualizado = await pool.query(
+      `UPDATE ensaios 
+       SET filmmaker_id = COALESCE($1, filmmaker_id),
+           roteirista_id = COALESCE($2, roteirista_id),
+           diretor_id = COALESCE($3, diretor_id),
+           status = COALESCE($4, status)
+       WHERE id = $5 RETURNING *`,
+      [filmmaker_id, roteirista_id, diretor_id, status, id]
+    );
+    
+    if (ensaioAtualizado.rowCount === 0) return res.status(404).json({ error: 'Ensaio não encontrado.' });
 
-    const ensaioAtualizado = await pool.query(query, [
-      fotografo_responsavel, 
-      roteirista_responsavel, 
-      auxiliar_responsavel, 
-      status, 
-      id
-    ]);
-    
-    if (ensaioAtualizado.rowCount === 0) {
-      return res.status(404).json({ error: 'Ensaio não encontrado.' });
+    const ensaioEditado = ensaioAtualizado.rows[0];
+
+    if (filmmaker_id) {
+      const buscaFilmmaker = await pool.query('SELECT * FROM colaboradores WHERE id = $1', [filmmaker_id]);
+      if (buscaFilmmaker.rows && buscaFilmmaker.rows.length > 0) {
+        await notificarColaboradorAtribuido(buscaFilmmaker.rows[0], ensaioEditado);
+      }
     }
 
-    return res.json({ message: 'Ensaio atualizado com sucesso!', ensaio: ensaioAtualizado.rows[0] });
+    return res.json({ message: 'Ensaio updated com sucesso!', ensaio: ensaioEditado });
   } catch (error) {
-    console.error('❌ Erro ao atualizar o ensaio (Admin):', error);
+    console.error(error);
     return res.status(500).json({ error: 'Erro ao atualizar o ensaio.' });
-  }
-});
-
-// Cadastrar membro da equipe (Admin) - Alinhado com a tabela equipe e campos booleanos
-router.post('/admin/equipe', async (req, res) => {
-  try {
-    const { nome, email, telefone, eh_fotografo, eh_roteirista, eh_auxiliar } = req.body;
-    
-    const novoMembro = await pool.query(
-      `INSERT INTO equipe (nome, email, telefone, eh_fotografo, eh_roteirista, eh_auxiliar) 
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [nome, email, telefone, eh_fotografo || false, eh_roteirista || false, eh_auxiliar || false]
-    );
-    return res.status(201).json(novoMembro.rows[0]);
-  } catch (error) {
-    console.error('❌ Erro ao cadastrar membro da equipe:', error);
-    return res.status(500).json({ error: 'Erro ao cadastrar membro da equipe.' });
-  }
-});
-
-// Listar todos os membros da equipe (Admin)
-router.get('/admin/equipe', async (req, res) => {
-  try {
-    const resultado = await pool.query('SELECT * FROM equipe ORDER BY nome ASC');
-    return res.json(resultado.rows);
-  } catch (error) {
-    console.error('❌ Erro ao listar equipe (Admin):', error);
-    return res.status(500).json({ error: 'Erro ao listar equipe.' });
   }
 });
 
@@ -317,7 +326,7 @@ const ejecutarCancelamentoEnsaio = async (req: any, res: any) => {
         evento: 'ENSAIO_CANCELADO'
       });
     } catch (n8nErr: any) {
-      console.error('⚠️ Falha no n8n, mas o banco foi atualizado:', n8nErr.message);
+      console.error('⚠️ Falha no n8n, mas o banco foi updated:', n8nErr.message);
     }
 
     return res.json({ message: 'Ensaio cancelado com sucesso.', ensaio });
@@ -339,14 +348,14 @@ router.patch('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
 // ROTAS DO PAINEL OPERACIONAL
 // ==========================================
 
-// LOGIN / AUTENTICAÇÃO DA EQUIPE (Bate na tabela equipe e traz os booleanos reais)
+// 🚀 NOVA ROTA 1: LOGIN / AUTENTICAÇÃO DA EQUIPE
 router.post('/painel/auth/login', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
 
     const buscaUsuario = await pool.query(
-      'SELECT id, nome, email, eh_fotografo, eh_roteirista, eh_auxiliar FROM equipe WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, nome, email FROM equipe WHERE LOWER(email) = LOWER($1)',
       [email.trim()]
     );
 
@@ -361,7 +370,7 @@ router.post('/painel/auth/login', async (req, res) => {
   }
 });
 
-// BUSCAR APENAS OS ENSAIOS DO COLABORADOR LOGADO (CASE INSENSITIVE OTIMIZADO)
+// 🚀 NOVA ROTA 2: BUSCAR APENAS OS ENSAIOS DO COLABORADOR LOGADO
 router.get('/painel/meus-ensaios', async (req, res) => {
   try {
     const { nomeColaborador } = req.query;
@@ -377,9 +386,9 @@ router.get('/painel/meus-ensaios', async (req, res) => {
              fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
              link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
       FROM ensaios 
-      WHERE LOWER(fotografo_responsavel) = LOWER($1) 
-         OR LOWER(roteirista_responsavel) = LOWER($1) 
-         OR LOWER(auxiliar_responsavel) = LOWER($1)
+      WHERE fotografo_responsavel = $1 
+         OR roteirista_responsavel = $1 
+         OR auxiliar_responsavel = $1
       ORDER BY data_ensaio ASC, hora_inicio ASC
     `;
     
@@ -391,7 +400,7 @@ router.get('/painel/meus-ensaios', async (req, res) => {
   }
 });
 
-// UPLOAD AUTOMÁTICO DE ROTEIRO (PDF) PARA O CLOUDFLARE R2
+// 🚀 NOVA ROTA 3: UPLOAD AUTOMÁTICO DE ROTEIRO (PDF) PARA O CLOUDFLARE R2
 router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req: any, res: any) => {
   try {
     const { id } = req.params;
@@ -401,9 +410,11 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
       return res.status(400).json({ error: 'Nenhum arquivo de roteiro enviado.' });
     }
 
+    // Cria um nome totalmente único para rastreamento interno do bucket
     const uuidUnico = crypto.randomUUID();
     const nomeArquivo = `roteiros/${uuidUnico}-${file.originalname}`;
 
+    // Parâmetros estruturados para a API do S3/R2
     const params = {
       Bucket: process.env.R2_BUCKET_NAME,
       Key: nomeArquivo,
@@ -411,9 +422,13 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
       ContentType: file.mimetype,
     };
 
+    // Faz o disparo direto para o bucket da Cloudflare
     await s3Client.send(new PutObjectCommand(params));
+
+    // Gera o endereço público de visualização nativa
     const urlPublicaRoteiro = `${process.env.R2_PUBLIC_URL}/${nomeArquivo}`;
 
+    // Atualiza dinamicamente a coluna do banco baseando-se no ID do ensaio
     const query = `
       UPDATE ensaios 
       SET link_roteiro = $1 
@@ -439,7 +454,6 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
   }
 });
 
-// Listar Equipe pelo Painel (Tabela equipe correta)
 router.get('/painel/equipe', async (req, res) => {
   try {
     const resultado = await pool.query('SELECT * FROM equipe ORDER BY nome ASC');
@@ -450,9 +464,41 @@ router.get('/painel/equipe', async (req, res) => {
   }
 });
 
-// Listar todos os ensaios no Painel Geral
+// 🚀 ROTA 2 CORRIGIDA: BUSCAR ENSAIOS DO COLABORADOR LOGADO (COM LINKS E TRATAMENTO DE TEXTO)
+router.get('/painel/meus-ensaios', async (req, res) => {
+  try {
+    const { nomeColaborador } = req.query;
+
+    if (!nomeColaborador) {
+      return res.status(400).json({ error: 'Nome do colaborador é obrigatório para filtrar.' });
+    }
+
+    // 💡 Adicionado LOWER para evitar problemas com maiúsculas/minúsculas no nome
+    const query = `
+      SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
+             TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
+             hora_inicio, hora_fim, status,
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
+      FROM ensaios 
+      WHERE LOWER(fotografo_responsavel) = LOWER($1) 
+         OR LOWER(roteirista_responsavel) = LOWER($1) 
+         OR LOWER(auxiliar_responsavel) = LOWER($1)
+      ORDER BY data_ensaio ASC, hora_inicio ASC
+    `;
+    
+    const resultado = await pool.query(query, [String(nomeColaborador).trim()]);
+    return res.json(resultado.rows);
+  } catch (error) {
+    console.error('❌ Erro ao buscar ensaios do colaborador:', error);
+    return res.status(500).json({ error: 'Erro ao buscar seus ensaios.' });
+  }
+});
+
+// 🚀 ROTA GERAL ADICIONADA: ADICIONADOS OS LINKS NO SELECT CASO O FRONT ESTEJA BATENDO AQUI
 router.get('/painel/ensaios', async (req, res) => {
   try {
+    // 💡 Agora esta rota também entrega link_roteiro, link_arquivos_ensaio e link_materiais_auxiliares
     const query = `
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
              TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
@@ -471,7 +517,6 @@ router.get('/painel/ensaios', async (req, res) => {
   }
 });
 
-// Atualização de Status, Links ou Escalação no Painel com a Trava de Segurança ativa
 router.patch('/painel/ensaios/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -483,7 +528,9 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       auxiliar_responsavel
     } = req.body;
 
+    // =============================================
     // CASO 1: CANCELAMENTO
+    // =============================================
     if (status === 'Cancelado') {
       if (!motivo_cancelamento || motivo_cancelamento.trim() === '') {
         return res.status(400).json({ error: 'O motivo do cancelamento é obrigatório.' });
@@ -499,6 +546,8 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       }
 
       const ensaioCancelado = resultado.rows[0];
+
+      // Busca email e telefone da equipe alocada neste ensaio
       let dadosFotografo  = { email: '', telefone: '' };
       let dadosRoteirista = { email: '', telefone: '' };
       let dadosAuxiliar   = { email: '', telefone: '' };
@@ -539,7 +588,9 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       return res.json({ message: 'Ensaio cancelado com sucesso.', ensaio: ensaioCancelado });
     }
 
+    // =============================================
     // CASO 2: CONCLUSÃO
+    // =============================================
     if (status === 'Concluído') {
       const resultado = await pool.query(
         `UPDATE ensaios SET status = 'Concluído' WHERE id = $1 RETURNING *`,
@@ -553,31 +604,35 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       return res.json({ message: 'Ensaio concluído!', ensaio: resultado.rows[0] });
     }
 
-    // CASO 3: APENAS ATUALIZAÇÃO DE LINKS (Paineis Operacionais)
+    // =============================================
+    // CASO 3: ESCALAÇÃO DE EQUIPE OU ATUALIZAÇÃO DE LINKS (PANEIS OPERACIONAIS)
+    // =============================================
     const ensaioAtual = await pool.query('SELECT * FROM ensaios WHERE id = $1', [id]);
     if (ensaioAtual.rowCount === 0) {
       return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
+    // Se a requisição veio dos painéis operacionais (apenas atualizando links), processa direto:
     const { link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares } = req.body;
     const ehAtualizacaoDeLinks = link_roteiro !== undefined || link_arquivos_ensaio !== undefined || link_materiais_auxiliares !== undefined;
 
     if (ehAtualizacaoDeLinks) {
       const queryUpdateLinks = `
         UPDATE ensaios 
-        SET link_roteiro = COALESCE($1, link_roteiro),
-            link_arquivos_ensaio = COALESCE($2, link_arquivos_ensaio),
-            link_materiais_auxiliares = COALESCE($3, link_materiais_auxiliares)
+        SET 
+          link_roteiro = COALESCE($1, link_roteiro),
+          link_arquivos_ensaio = COALESCE($2, link_arquivos_ensaio),
+          link_materiais_auxiliares = COALESCE($3, link_materiais_auxiliares)
         WHERE id = $4 RETURNING *
       `;
       const resultadoLinks = await pool.query(queryUpdateLinks, [
         link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares, id
       ]);
 
-      return res.json({ message: 'Links do ensaio updated com sucesso!', ensaio: resultadoLinks.rows[0] });
+      return res.json({ message: 'Links do ensaio atualizados com sucesso!', ensaio: resultadoLinks.rows[0] });
     }
 
-    // CASO 4: ESCALAÇÃO DE EQUIPE (Aplica trava de segurança para checar strings de nomes)
+    // Se NÃO for atualização de links, significa que é a escalação do CS. Aí sim aplicamos a trava:
     if (
       !fotografo_responsavel || fotografo_responsavel.trim() === '' ||
       !roteirista_responsavel || roteirista_responsavel.trim() === '' ||
@@ -599,6 +654,8 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       novoStatus, fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel, id
     ]);
     const ensaioAtualizado = resultado.rows[0];
+
+    // ... (Mantém o restante do seu código de busca da equipe e envio do Webhook de Atribuição igualzinho!)
 
     const nomesEquipe = [fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel];
     let dadosFotografo  = { email: '', telefone: '' };
@@ -674,10 +731,8 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
 });
 
 // =========================================================================
-// PUBLIC CLIENT INTERFACES (FORMULÁRIO DE CANCELAMENTO DIRECT LINK)
+// 1. TELA DE FORMULÁRIO DE CANCELAMENTO (GET)
 // =========================================================================
-
-// Tela de Confirmação visual (GET)
 router.get('/v1/agendamentos/cancelar', async (req, res) => {
   const { id, token } = req.query;
 
@@ -726,7 +781,54 @@ router.get('/v1/agendamentos/cancelar', async (req, res) => {
   }
 });
 
-// Processar cancelamento enviado pelo cliente (POST)
+// =========================================================================
+// FUNÇÃO AUXILIAR: FORMATAR NÚMERO PARA PADRÃO WHATSAPP (55DDD9XXXXXXXX)
+// =========================================================================
+function formatarTelefoneWhatsapp(telefoneCru: string): string {
+  if (!telefoneCru) return '';
+
+  // 1. Remove espaços, hífens, parênteses e qualquer caractere não-numérico
+  let apenasNumeros = telefoneCru.replace(/\D/g, '');
+
+  if (!apenasNumeros) return '';
+
+  // 2. Se o usuário digitou com o 0 na frente do DDD (ex: 062...), remove o zero
+  if (apenasNumeros.startsWith('0')) {
+    apenasNumeros = apenasNumeros.substring(1);
+  }
+
+  // 3. Se o número já começar com 55 e tiver o tamanho certo, retorna ele
+  if (apenasNumeros.startsWith('55') && (apenasNumeros.length === 12 || apenasNumeros.length === 13)) {
+    return apenasNumeros;
+  }
+
+  // 4. Se não tem o 55, analisa o tamanho do bloco (DDD + Número)
+  // Caso 1: Tem 10 dígitos (ex: 62 84243353) -> Falta o 55 e o 9 artificial
+  if (apenasNumeros.length === 10) {
+    const ddd = apenasNumeros.substring(0, 2);
+    const numero = apenasNumeros.substring(2);
+    return `55${ddd}9${numero}`;
+  }
+
+  // Caso 2: Tem 11 dígitos (ex: 62 984243353) -> Falta apenas o 55 do país
+  if (apenasNumeros.length === 11) {
+    return `55${apenasNumeros}`;
+  }
+
+  // Caso 3: Tem 8 ou 9 dígitos (Salvo sem DDD) -> Assume o DDD 62 padrão da região
+  if (apenasNumeros.length === 8) {
+    return `55629${apenasNumeros}`;
+  }
+  if (apenasNumeros.length === 9) {
+    return `5562${apenasNumeros}`;
+  }
+
+  return apenasNumeros.startsWith('55') ? apenasNumeros : `55${apenasNumeros}`;
+}
+
+// =========================================================================
+// 2. PROCESSAR O CANCELAMENTO E DISPARAR N8N (POST)
+// =========================================================================
 router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
   const { id, token, motivo } = req.body;
 
@@ -735,6 +837,7 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
   }
 
   try {
+    // 1. Busca o ensaio completo antes de qualquer alteração
     const buscaEnsaio = await pool.query('SELECT * FROM ensaios WHERE id = $1', [id]);
     const ensaio = buscaEnsaio.rows[0];
 
@@ -746,17 +849,20 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
       return res.send('<h1>Este ensaio já foi cancelado anteriormente.</h1>');
     }
 
+    // 2. Atualiza no banco salvando o motivo que o cliente digitou
     await pool.query(
       "UPDATE ensaios SET status = 'Cancelado', motivo_cancelamento = $1 WHERE id = $2", 
       [motivo, id]
     );
 
+    // 3. Busca e-mails e telefones da equipe alocada (Protegido contra valores nulos/vazios)
     const fotografoNome = ensaio.fotografo_responsavel ? ensaio.fotografo_responsavel.trim() : '';
     const roteiristaNome = ensaio.roteirista_responsavel ? ensaio.roteirista_responsavel.trim() : '';
     const auxiliarNome = ensaio.auxiliar_responsavel ? ensaio.auxiliar_responsavel.trim() : '';
 
     const nomesResponsaveis = [fotografoNome, roteiristaNome, auxiliarNome].filter(nome => nome !== '');
 
+    // Criamos objetos de segurança caso ninguém esteja alocado
     let dadosFotografo = { email: '', telefone: '' };
     let dadosRoteirista = { email: '', telefone: '' };
     let dadosAuxiliar = { email: '', telefone: '' };
@@ -764,12 +870,14 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
     if (nomesResponsaveis.length > 0) {
       const buscaEquipe = await pool.query('SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)', [nomesResponsaveis]);
       
+      // Mapeia os contatos de cada um de volta para suas respectivas funções
       buscaEquipe.rows.forEach(colaborador => {
         if (colaborador.nome === ensaio.fotografo_responsavel) dadosFotografo = colaborador;
         if (colaborador.nome === ensaio.roteirista_responsavel) dadosRoteirista = colaborador;
         if (colaborador.nome === ensaio.auxiliar_responsavel) dadosAuxiliar = colaborador;
       });
 
+      // Dispara os e-mails internos direto pelo Node
       for (const colaborador of buscaEquipe.rows) {
         let funcao = 'Equipe';
         if (colaborador.nome === ensaio.fotografo_responsavel) funcao = 'Fotógrafo/Filmmaker';
@@ -784,10 +892,12 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
       }
     }
 
+    // 4. Reconstrói o link público para histórico ou consulta
     const protocolo = req.protocol;
     const host = req.get('host');
     const linkCancelamento = `${protocolo}://${host}/api/v1/agendamentos/cancelar?id=${ensaio.id}&token=${token}`;
 
+    // 5. 🚀 ENVIANDO O PAYLOAD COMPLETO PARA O N8N NOVO
     try {
       await enviarParaN8n({
         id: ensaio.id,
@@ -804,20 +914,23 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
         motivo_cancelamento: motivo,
         link_cancelamento: linkCancelamento,
         
+        // 🔹 Dados do Fotógrafo (Tratado contra erros de formatação!)
         fotografo_responsavel: ensaio.fotografo_responsavel || 'Não atribuído',
         fotografo_email: dadosFotografo.email || '',
         fotografo_telefone: dadosFotografo.telefone ? formatarTelefoneWhatsapp(dadosFotografo.telefone) : '',
 
+        // 🔹 Dados do Roteirista (Tratado!)
         roteirista_responsavel: ensaio.roteirista_responsavel || 'Não atribuído',
         roteirista_email: dadosRoteirista.email || '',
         roteirista_telefone: dadosRoteirista.telefone ? formatarTelefoneWhatsapp(dadosRoteirista.telefone) : '',
 
+        // 🔹 Dados do Auxiliar (Tratado!)
         auxiliar_responsavel: ensaio.auxiliar_responsavel || 'Não atribuído',
         auxiliar_email: dadosAuxiliar.email || '',
         auxiliar_telefone: dadosAuxiliar.telefone ? formatarTelefoneWhatsapp(dadosAuxiliar.telefone) : ''
       } as any);
       
-      console.log('🚀 Webhook enviado para o n8n com sucesso!');
+      console.log('🚀 Webhook enviado com contatos limpos e padronizados para WhatsApp!');
     } catch (n8nError) {
       console.error('❌ Falha ao processar função enviarParaN8n:', n8nError);
     }
@@ -835,41 +948,5 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
   }
 });
 
-// =========================================================================
-// FUNCTIONS DE SUPORTE & FORMATAÇÃO
-// =========================================================================
-function formatarTelefoneWhatsapp(telefoneCru: string): string {
-  if (!telefoneCru) return '';
-  let apenasNumeros = telefoneCru.replace(/\D/g, '');
-  if (!apenasNumeros) return '';
-
-  if (apenasNumeros.startsWith('0')) {
-    apenasNumeros = apenasNumeros.substring(1);
-  }
-
-  if (apenasNumeros.startsWith('55') && (apenasNumeros.length === 12 || apenasNumeros.length === 13)) {
-    return apenasNumeros;
-  }
-
-  if (apenasNumeros.length === 10) {
-    const ddd = apenasNumeros.substring(0, 2);
-    const numero = apenasNumeros.substring(2);
-    return `55${ddd}9${numero}`;
-  }
-
-  if (apenasNumeros.length === 11) {
-    return `55${apenasNumeros}`;
-  }
-
-  if (apenasNumeros.length === 8) {
-    return `55629${apenasNumeros}`;
-  }
-  if (apenasNumeros.length === 9) {
-    return `5562${apenasNumeros}`;
-  }
-
-  return apenasNumeros.startsWith('55') ? apenasNumeros : `55${apenasNumeros}`;
-}
-
-// Named Export para sanar o SyntaxError de runtime
+// ✅ CORREÇÃO CRÍTICA: Mudança de export default para Named Export para sanar o SyntaxError
 export { router };
