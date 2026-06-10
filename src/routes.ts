@@ -75,6 +75,102 @@ router.get('/agenda/disponibilidade', async (req, res) => {
       });
     }
 
+  // ==========================================
+  // 1.1 VERIFICAR DISPONIBILIDADE DO MÊS INTEIRO (Para o Calendário)
+  // ==========================================
+router.get('/agenda/disponibilidade-mes', async (req, res) => {
+  try {
+    const { ano, mes } = req.query;
+    if (!ano || !mes) {
+      return res.status(400).json({ error: 'Ano e mês são obrigatórios.' });
+    }
+
+    const anoNum = parseInt(ano as string);
+    const mesNum = parseInt(mes as string) - 1; // No JS, os meses vão de 0 a 11 (Janeiro = 0, Junho = 5)
+
+    // Descobre o último dia do mês informado (ex: 30 para junho)
+    const ultimoDiaDoMes = new Date(anoNum, mesNum + 1, 0).getDate();
+    
+    const diasResultado = [];
+
+    // Data de hoje zerada para validação de antecedência
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const dataMinimaPermitida = new Date(hoje);
+    dataMinimaPermitida.setDate(dataMinimaPermitida.getDate() + 3);
+
+    // Loop por todos os dias do mês solicitado
+    for (let dia = 1; dia <= ultimoDiaDoMes; dia++) {
+      const dataCorrente = new Date(Date.UTC(anoNum, mesNum, dia));
+      const dataFormatadaISO = dataCorrente.toISOString().split('T')[0]; // YYYY-MM-DD
+      const diaDaSemana = dataCorrente.getUTCDay();
+
+      // TRAVA 1: Menos de 3 dias de antecedência
+      const dataComparacao = new Date(dataCorrente.getUTCFullYear(), dataCorrente.getUTCMonth(), dataCorrente.getUTCDate());
+      if (dataComparacao < dataMinimaPermitida) {
+        diasResultado.push({
+          data: dataFormatadaISO,
+          permitido: false,
+          mensagem: 'Os ensaios devem ser agendados com no mínimo 3 dias de antecedência.'
+        });
+        continue;
+      }
+
+      // TRAVA 2: Domingo (0) ou Segunda (1)
+      if (diaDaSemana === 0 || diaDaSemana === 1) {
+        diasResultado.push({
+          data: dataFormatadaISO,
+          permitido: false,
+          mensagem: 'Para agendar neste dia, confirme disponibilidade com a equipe pelo WhatsApp.'
+        });
+        continue;
+      }
+
+      // TRAVA 3: Regra de sobrecarga do dia anterior (2 ensaios ontem + 1 hoje)
+      const dataAnteriorObj = new Date(dataCorrente);
+      dataAnteriorObj.setUTCDate(dataAnteriorObj.getUTCDate() - 1);
+      const dataAnteriorFormatada = dataAnteriorObj.toISOString().split('T')[0];
+
+      // Busca ensaios ativos do dia anterior
+      const resAnterior = await pool.query(
+        `SELECT COUNT(*) FROM ensaios WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')`,
+        [dataAnteriorFormatada]
+      );
+      const totalEnsaiosDiaAnterior = parseInt(resAnterior.rows[0].count);
+
+      // Busca ensaios ativos do dia atual do loop
+      const resAtual = await pool.query(
+        `SELECT COUNT(*) FROM ensaios WHERE data_ensaio = $1 AND status NOT IN ('Cancelado', 'Concluído')`,
+        [dataFormatadaISO]
+      );
+      const totalEnsaiosDiaAtual = parseInt(resAtual.rows[0].count);
+
+      if (totalEnsaiosDiaAnterior >= 2 && totalEnsaiosDiaAtual >= 1) {
+        diasResultado.push({
+          data: dataFormatadaISO,
+          permitido: false,
+          mensagem: 'Agenda limitada para este dia devido ao volume de produções do dia anterior.'
+        });
+        continue;
+      }
+
+      // Se passou em todas as regras, o dia está inicialmente liberado no calendário do front
+      diasResultado.push({
+        data: dataFormatadaISO,
+        permitido: true,
+        mensagem: 'Horários disponíveis.'
+      });
+    }
+
+    // Retorna a lista completa mapeada para o componente do front-end
+    return res.json(diasResultado);
+
+  } catch (error) {
+    console.error('❌ Erro ao calcular disponibilidade mensal:', error);
+    return res.status(500).json({ error: 'Erro interno ao calcular disponibilidade mensal.' });
+  }
+});
+
 // 🕒 LISTA DE HORÁRIOS PERMITIDOS (Permite início até as 19:00)
     const horariosPossiveis = [
       '07:00', '08:00', '09:00', '10:00', '11:00', 
