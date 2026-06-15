@@ -858,3 +858,4 @@ router.post('/v1/agendamentos/cancelar/confirmar', async (req, res) => {
 
 // ✅ CORREÇÃO CRÍTICA: Mudança de export default para Named Export para sanar o SyntaxError
 export { router };
+// ✅ CORREÇÃO CRÍTICA: Mudança de export default para Named Export para sanar o SyntaxError
