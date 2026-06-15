@@ -467,10 +467,65 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       const resLinks = await pool.query(queryLinks, valores);
       
       if (resLinks.rowCount === 0) return res.status(404).json({ error: 'Ensaio não encontrado.' });
-      return res.json({ message: 'Link atualizado com sucesso!', ensaio: resLinks.rows[0] });
+      const ensaioAtualizado = resLinks.rows[0];
+
+      // 🚀 DISPARO DO WEBHOOK CENTRALIZADO PARA O N8N
+      try {
+        const axios = (await import('axios')).default;
+        
+        // Define dinamicamente o tipo de evento e o link correspondente
+        const eventoDefinido = link_arquivos_ensaio !== undefined ? 'ARQUIVOS_BRUTOS_ENVIADOS' : 'MATERIAIS_AUXILIARES_ENVIADOS';
+        const linkEnviado = link_arquivos_ensaio !== undefined ? link_arquivos_ensaio : link_materiais_auxiliares;
+
+        // Busca dados de contato de todos os membros da equipe escalados
+        let dFoto = { email: '', telefone: '' }, dRote = { email: '', telefone: '' }, dAux = { email: '', telefone: '' };
+        const nomesEquipe = [ensaioAtualizado.fotografo_responsavel, ensaioAtualizado.roteirista_responsavel, ensaioAtualizado.auxiliar_responsavel].filter(n => n && n.trim() !== '');
+
+        if (nomesEquipe.length > 0) {
+          const buscaEquipe = await pool.query('SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)', [nomesEquipe]);
+          buscaEquipe.rows.forEach(membro => {
+            if (membro.name === ensaioAtualizado.fotografo_responsavel || membro.nome === ensaioAtualizado.fotografo_responsavel) dFoto = membro;
+            if (membro.name === ensaioAtualizado.roteirista_responsavel || membro.nome === ensaioAtualizado.roteirista_responsavel) dRote = membro;
+            if (membro.name === ensaioAtualizado.auxiliar_responsavel || membro.nome === ensaioAtualizado.auxiliar_responsavel) dAux = membro;
+          });
+        }
+
+        const dataBanco = new Date(ensaioAtualizado.data_ensaio);
+        const dataFormatada = `${dataBanco.getUTCFullYear()}-${String(dataBanco.getUTCMonth() + 1).padStart(2, '0')}-${String(dataBanco.getUTCDate()).padStart(2, '0')}`;
+
+        await axios.post('https://n8n-new.arsenalestrategia.com.br/webhook/acao_equipe', {
+          evento: eventoDefinido,
+          ensaio_id: ensaioAtualizado.id,
+          empresa_nome: ensaioAtualizado.empresa_nome,
+          link_atualizado: linkEnviado,
+          data_ensaio: dataFormatada,
+          hora_inicio: ensaioAtualizado.hora_inicio,
+          
+          // Informações do Filmmaker
+          filmmaker_nome: ensaioAtualizado.fotografo_responsavel || 'Não escalado',
+          filmmaker_email: dFoto.email || '',
+          filmmaker_telefone: formatarTelefoneWhatsapp(dFoto.telefone),
+
+          // Informações do Roteirista
+          roteirista_nome: ensaioAtualizado.roteirista_responsavel || 'Não escalado',
+          roteirista_email: dRote.email || '',
+          roteirista_telefone: formatarTelefoneWhatsapp(dRote.telefone),
+
+          // Informações do Auxiliar
+          auxiliar_nome: ensaioAtualizado.auxiliar_responsavel || 'Não escalado',
+          auxiliar_email: dAux.email || '',
+          auxiliar_telefone: formatarTelefoneWhatsapp(dAux.telefone)
+        });
+
+        console.log(`📡 Webhook [${eventoDefinido}] disparado com sucesso para a empresa ${ensaioAtualizado.empresa_nome}`);
+      } catch (webhookErr: any) {
+        console.error('❌ Erro ao enviar webhook de links de texto para o n8n:', webhookErr.message);
+      }
+      
+      return res.json({ message: 'Link atualizado com sucesso!', ensaio: ensaioAtualizado });
     }
 
-    // CASO 1: CANCELAMENTO GERAL
+    // CASO 1: CANCELAMENTO GERAL (Mantém o seu código padrão daqui para baixo...)
     if (status === 'Cancelado') {
       if (!motivo_cancelamento || motivo_cancelamento.trim() === '') return res.status(400).json({ error: 'O motivo do cancelamento é obrigatório.' });
 
@@ -539,7 +594,7 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       } catch (err: any) { console.error('Erro webhook atribuição:', err.message); }
     }
 
-    return res.json({ message: 'Agendamento atualizado com sucesso!', ensaio: resultado.rows[0] });
+    return res.json({ message: 'Agendamento updated com sucesso!', ensaio: resultado.rows[0] });
   } catch (error) {
     console.error('❌ Erro ao atualizar dados do ensaio:', error);
     return res.status(500).json({ error: 'Erro ao atualizar dados.' });
@@ -561,7 +616,7 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
 
     // Dispara o arquivo em buffer diretamente para o Cloudflare R2
     const comandoR2 = new PutObjectCommand({
-      Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME, // Seu nome de bucket configurado no .env
+      Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
       Key: nomeDoArquivoNoBucket,
       Body: req.file.buffer,
       ContentType: 'application/pdf',
@@ -572,9 +627,9 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
     // Monta a URL pública definitiva baseada no seu subdomínio ou URL pública do R2
     const urlPublicaR2 = `${process.env.CLOUDFLARE_R2_PUBLIC_URL}/${nomeDoArquivoNoBucket}`;
 
-    // Atualiza o banco de dados com a nova URL pública gerada
+    // 🟢 ALTERADO: Atualiza o banco de dados e retorna todos os campos (*)
     const resultado = await pool.query(
-      `UPDATE ensaios SET link_roteiro = $1 WHERE id = $2 RETURNING link_roteiro`,
+      `UPDATE ensaios SET link_roteiro = $1 WHERE id = $2 RETURNING *`,
       [urlPublicaR2, id]
     );
 
@@ -582,10 +637,61 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
       return res.status(404).json({ error: 'Ensaio não encontrado.' });
     }
 
+    const ensaioAtualizado = resultado.rows[0];
+
+    // 🚀 DISPARO DO WEBHOOK CENTRALIZADO PARA O N8N
+    try {
+      const axios = (await import('axios')).default;
+
+      // Busca dados de contato de todos os membros da equipe escalados
+      let dFoto = { email: '', telefone: '' }, dRote = { email: '', telefone: '' }, dAux = { email: '', telefone: '' };
+      const nomesEquipe = [ensaioAtualizado.fotografo_responsavel, ensaioAtualizado.roteirista_responsavel, ensaioAtualizado.auxiliar_responsavel].filter(n => n && n.trim() !== '');
+
+      if (nomesEquipe.length > 0) {
+        const buscaEquipe = await pool.query('SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)', [nomesEquipe]);
+        buscaEquipe.rows.forEach(membro => {
+          if (membro.name === ensaioAtualizado.fotografo_responsavel || membro.nome === ensaioAtualizado.fotografo_responsavel) dFoto = membro;
+          if (membro.name === ensaioAtualizado.roteirista_responsavel || membro.nome === ensaioAtualizado.roteirista_responsavel) dRote = membro;
+          if (membro.name === ensaioAtualizado.auxiliar_responsavel || membro.nome === ensaioAtualizado.auxiliar_responsavel) dAux = membro;
+        });
+      }
+
+      const dataBanco = new Date(ensaioAtualizado.data_ensaio);
+      const dataFormatada = `${dataBanco.getUTCFullYear()}-${String(dataBanco.getUTCMonth() + 1).padStart(2, '0')}-${String(dataBanco.getUTCDate()).padStart(2, '0')}`;
+
+      await axios.post('https://n8n-new.arsenalestrategia.com.br/webhook/acao_equipe', {
+        evento: 'ROTEIRO_ENVIADO',
+        ensaio_id: ensaioAtualizado.id,
+        empresa_nome: ensaioAtualizado.empresa_nome,
+        link_atualizado: urlPublicaR2,
+        data_ensaio: dataFormatada,
+        hora_inicio: ensaioAtualizado.hora_inicio,
+        
+        // Informações do Filmmaker
+        filmmaker_nome: ensaioAtualizado.fotografo_responsavel || 'Não escalado',
+        filmmaker_email: dFoto.email || '',
+        filmmaker_telefone: formatarTelefoneWhatsapp(dFoto.telefone),
+
+        // Informações do Roteirista
+        roteirista_nome: ensaioAtualizado.roteirista_responsavel || 'Não escalado',
+        roteirista_email: dRote.email || '',
+        roteirista_telefone: formatarTelefoneWhatsapp(dRote.telefone),
+
+        // Informações do Auxiliar
+        auxiliar_nome: ensaioAtualizado.auxiliar_responsavel || 'Não escalado',
+        auxiliar_email: dAux.email || '',
+        auxiliar_telefone: formatarTelefoneWhatsapp(dAux.telefone)
+      });
+
+      console.log(`📡 Webhook [ROTEIRO_ENVIADO] disparado com sucesso para a empresa ${ensaioAtualizado.empresa_nome}`);
+    } catch (webhookErr: any) {
+      console.error('❌ Erro ao enviar webhook do roteiro para o n8n:', webhookErr.message);
+    }
+
     // Retorna exatamente o objeto que o front-end espera para atualizar o state em tempo real!
     return res.json({ 
       message: 'Roteiro atualizado com sucesso!', 
-      link_roteiro: resultado.rows[0].link_roteiro 
+      link_roteiro: ensaioAtualizado.link_roteiro 
     });
 
   } catch (error: any) {
