@@ -412,21 +412,25 @@ router.get('/painel/equipe', async (req, res) => {
   } catch (error) { return res.status(500).json({ error: 'Erro ao buscar equipe.' }); }
 });
 
-// 4. LISTAR TODOS OS ENSAIOS (VISÃO GERAL)
+// 4. LISTAR TODOS OS ENSAIOS (VISÃO GERAL) - CORRIGIDO!
 router.get('/painel/ensaios', async (req, res) => {
   try {
     const query = `
       SELECT id, empresa_nome, contato_nome, contato_telefone, email_cliente, objetivos, 
              TO_CHAR(data_ensaio, 'YYYY-MM-DD') as data_ensaio, 
              hora_inicio, hora_fim, status,
-             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel 
+             fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel,
+             link_roteiro, link_arquivos_ensaio, link_materiais_auxiliares
       FROM ensaios 
       WHERE status != 'Cancelado'
       ORDER BY data_ensaio ASC, hora_inicio ASC
     `;
     const resultado = await pool.query(query);
     return res.json(resultado.rows);
-  } catch (error) { return res.status(500).json({ error: 'Erro ao buscar dados do painel.' }); }
+  } catch (error) { 
+    console.error('❌ Erro ao buscar ensaios no painel:', error);
+    return res.status(500).json({ error: 'Erro ao buscar dados do painel.' }); 
+  }
 });
 
 // 5. ATUALIZAÇÃO DE STATUS / INTERCEPTADOR DE LINKS ENVIADOS PELO PAINEL DINÂMICO
