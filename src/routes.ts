@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { dispararRelatorioDiario } from './services/Relatorioservice.js';
 import { pool } from './database.js';
 import { adicionarEnsaioNaPlanilha } from './services/sheetsService.js';
 import { 
@@ -800,15 +799,6 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
   } catch (error: any) {
     console.error('❌ Erro crítico no upload do Roteiro R2:', error);
     return res.status(500).json({ error: 'Erro interno ao processar e salvar o PDF do roteiro.' });
-  }
-});
-// 🧪 ROTA DE TESTE — REMOVER DEPOIS
-router.get('/painel/testar-relatorio', async (req, res) => {
-  try {
-    await dispararRelatorioDiario();
-    return res.json({ message: 'Relatório disparado! Verifique o n8n e o console do servidor.' });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
   }
 });
 
