@@ -356,14 +356,17 @@ router.patch('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
 // ROTAS DO PAINEL OPERACIONAL (FOCADO NA TABELA 'EQUIPE')
 // ==========================================
 
-// 1. AUTENTICAÇÃO DO COLABORADOR (LOGIN DO PAINEL DINÂMICO)
+// 1. AUTENTICAÇÃO DO COLABORADOR (LOGIN DO PAINEL DINÂMICO COM EMAIL E SENHA)
 router.post('/painel/auth/login', async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
+    const { email, senha } = req.body; // 🟢 Captura o e-mail e a senha enviados pelo front-end
+    if (!email || !senha) {
+      return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
+    }
 
+    // 🟢 Adicionado 'senha' na busca do banco de dados
     const resultado = await pool.query(
-      'SELECT id, nome, email FROM equipe WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, nome, email, senha FROM equipe WHERE LOWER(email) = LOWER($1)',
       [email.trim()]
     );
 
@@ -371,7 +374,17 @@ router.post('/painel/auth/login', async (req, res) => {
       return res.status(404).json({ error: 'Colaborador não encontrado com este e-mail.' });
     }
 
-    return res.json(resultado.rows[0]);
+    const usuario = resultado.rows[0];
+
+    // 🟢 Validação da Senha (Comparação direta em texto plano)
+    if (usuario.senha !== senha) {
+      return res.status(401).json({ error: 'Senha incorreta. Verifique os dados e tente novamente.' });
+    }
+
+    // 🔒 Segurança: Remove a senha do objeto antes de enviar para o Front-end
+    delete usuario.senha;
+
+    return res.json(usuario);
   } catch (error) {
     console.error('❌ Erro no login do painel:', error);
     return res.status(500).json({ error: 'Erro interno no servidor ao autenticar.' });
