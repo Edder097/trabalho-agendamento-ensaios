@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { router } from './routes.js'; // ✅ Ajustado para importação nomeada com chaves
+import { router } from './routes.js';
+import { iniciarRelatorioDiario } from './services/Relatorioservice.js'; // 🟢 1. Import aqui
 
 dotenv.config();
 
@@ -10,9 +11,8 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Guardião para ler o formulário de motivo
+app.use(express.urlencoded({ extended: true }));
 
-// Usar as rotas da agenda
 app.use('/api', router);
 
 app.get('/', (req, res) => {
@@ -21,4 +21,5 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`⚡ Servidor rodando na porta http://localhost:${PORT}`);
+  iniciarRelatorioDiario(); // 🟢 2. Chama aqui, dentro do listen
 });
