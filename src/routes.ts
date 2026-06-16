@@ -325,7 +325,7 @@ router.put('/admin/ensaios/:id', async (req, res) => {
   } catch (error) { console.error(error); return res.status(500).json({ error: 'Erro ao atualizar o ensaio.' }); }
 });
 
-const executarCancelamentoEnsaio = async (req: any, res: any) => {
+const ejecutarCancelamentoEnsaio = async (req: any, res: any) => {
   try {
     const { id } = req.params;
     const motivo = req.body.motivo_cancelamento || req.body.motivo;
@@ -344,12 +344,12 @@ const executarCancelamentoEnsaio = async (req: any, res: any) => {
   } catch (error: any) { return res.status(500).json({ error: 'Erro interno ao cancelar.' }); }
 };
 
-router.put('/admin/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/admin/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.put('/filmmaker/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/filmmaker/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.put('/ensaios/:id/cancelar', executarCancelamentoEnsaio);
-router.patch('/ensaios/:id/cancelar', executarCancelamentoEnsaio);
+router.put('/admin/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/admin/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.put('/filmmaker/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/filmmaker/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.put('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
+router.patch('/ensaios/:id/cancelar', ejecutarCancelamentoEnsaio);
 
 
 // ==========================================
@@ -456,6 +456,12 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
       if (link_arquivos_ensaio !== undefined) {
         camposAlterar.push(`link_arquivos_ensaio = $${index++}`);
         valores.push(link_arquivos_ensaio);
+
+        // 🔥 O PULO DO GATO: Se o filmmaker subiu um link válido (não vazio), altera o status para 'Concluído' automaticamente
+        if (link_arquivos_ensaio && link_arquivos_ensaio.trim() !== '') {
+          camposAlterar.push(`status = $${index++}`);
+          valores.push('Concluído');
+        }
       }
       if (link_materiais_auxiliares !== undefined) {
         camposAlterar.push(`link_materiais_auxiliares = $${index++}`);
@@ -601,7 +607,7 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
   }
 });
 
-// 6. 🔥 REESCRITA COM MULTER: ROTA DE UPLOAD DO PDF DO ROTEIRO DIRETO PRO CLOUDFLARE R2
+// 6. 🔥 REESCRITA WITH MULTER: ROTA DE UPLOAD DO PDF DO ROTEIRO DIRETO PRO CLOUDFLARE R2
 router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -690,7 +696,7 @@ router.patch('/painel/ensaios/:id/roteiro', upload.single('roteiro'), async (req
 
     // Retorna exatamente o objeto que o front-end espera para atualizar o state em tempo real!
     return res.json({ 
-      message: 'Roteiro atualizado com sucesso!', 
+      message: 'Roteiro updated com sucesso!', 
       link_roteiro: ensaioAtualizado.link_roteiro 
     });
 
