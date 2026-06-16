@@ -417,7 +417,90 @@ router.get('/painel/meus-ensaios', async (req, res) => {
   }
 });
 
-// 3. LISTAR TODA A EQUIPE
+// 3. DASHBOARD DA EQUIPE — VISÃO DO GERENTE
+// Um único query eficiente: busca todos os ensaios onde alguém foi escalado,
+// e agrupa no JS por membro + papel, sem N+1 queries.
+router.get('/painel/dashboard/equipe', async (req, res) => {
+  try {
+    // Passo 1: Busca todos os membros da equipe
+    const membrosResult = await pool.query(
+      'SELECT id, nome, email FROM equipe ORDER BY nome ASC'
+    );
+    const membros = membrosResult.rows;
+
+    // Passo 2: Busca todos os ensaios que têm pelo menos um responsável
+    const ensaiosResult = await pool.query(`
+      SELECT 
+        id,
+        empresa_nome,
+        TO_CHAR(data_ensaio, 'DD/MM/YYYY') as data_ensaio,
+        hora_inicio,
+        status,
+        fotografo_responsavel,
+        roteirista_responsavel,
+        auxiliar_responsavel
+      FROM ensaios
+      WHERE fotografo_responsavel IS NOT NULL
+         OR roteirista_responsavel IS NOT NULL
+         OR auxiliar_responsavel IS NOT NULL
+      ORDER BY data_ensaio DESC, hora_inicio DESC
+    `);
+    const todosEnsaios = ensaiosResult.rows;
+
+    // Passo 3: Para cada membro, filtra os ensaios dele e determina o papel
+    const dashboard = membros.map((membro) => {
+      const trabalhos: Array<{
+        id: number;
+        empresa_nome: string;
+        data_ensaio: string;
+        hora_inicio: string;
+        status: string;
+        papel: string;
+      }> = [];
+
+      for (const ensaio of todosEnsaios) {
+        let papel: string | null = null;
+        if (ensaio.fotografo_responsavel === membro.nome) papel = 'Filmmaker';
+        else if (ensaio.roteirista_responsavel === membro.nome) papel = 'Roteirista';
+        else if (ensaio.auxiliar_responsavel === membro.nome) papel = 'Auxiliar Técnico';
+
+        if (papel) {
+          trabalhos.push({
+            id: ensaio.id,
+            empresa_nome: ensaio.empresa_nome,
+            data_ensaio: ensaio.data_ensaio,
+            hora_inicio: ensaio.hora_inicio,
+            status: ensaio.status,
+            papel,
+          });
+        }
+      }
+
+      const totais = trabalhos.reduce(
+        (acc, t) => {
+          acc.total++;
+          if (t.status === 'Concluído') acc.concluidos++;
+          if (t.status === 'Agendado') acc.agendados++;
+          if (t.papel === 'Filmmaker') acc.filmmaker++;
+          if (t.papel === 'Roteirista') acc.roteirista++;
+          if (t.papel === 'Auxiliar Técnico') acc.auxiliar++;
+          return acc;
+        },
+        { total: 0, concluidos: 0, agendados: 0, filmmaker: 0, roteirista: 0, auxiliar: 0 }
+      );
+
+      return { ...membro, totais, trabalhos };
+    });
+
+    // Retorna apenas membros que participaram de pelo menos 1 ensaio
+    return res.json(dashboard.filter((m) => m.totais.total > 0));
+  } catch (error) {
+    console.error('❌ Erro ao buscar dashboard da equipe:', error);
+    return res.status(500).json({ error: 'Erro ao buscar dashboard da equipe.' });
+  }
+});
+
+// 3.1. LISTAR TODA A EQUIPE
 router.get('/painel/equipe', async (req, res) => {
   try {
     const resultado = await pool.query('SELECT * FROM equipe ORDER BY nome ASC');
