@@ -59,6 +59,10 @@ export async function dispararRelatorioDiario(): Promise<void> {
     `);
     const ensaiosAgendados = ensaiosResult.rows;
 
+    // Captura a data de hoje e zera as horas, minutos e segundos para comparar apenas os dias
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
     // 3. Para cada membro, monta o objeto com seus trabalhos e papel
     const relatorioEquipe = membros.map((membro) => {
       const trabalhosDoMembro: Array<{
@@ -80,11 +84,21 @@ export async function dispararRelatorioDiario(): Promise<void> {
 
         if (!papel) continue;
 
+        // 🟢 NOVA LÓGICA DE DATA PARA O FILMMAKER
+        // Converte "DD/MM/YYYY" para um objeto Date do JavaScript
+        const [dia, mes, ano] = ensaio.data_ensaio.split('/');
+        const dataDoEnsaio = new Date(Number(ano), Number(mes) - 1, Number(dia));
+
+        // Se for Filmmaker e a data do ensaio for MAIOR OU IGUAL a hoje (ou seja, ainda não passou o dia do ensaio), ignora o aviso
+        if (papel === 'Filmmaker' && dataDoEnsaio >= hoje) {
+          continue;
+        }
+
         // Se o link correspondente ao papel já foi preenchido,
         // a entrega foi feita — não inclui no relatório
         const jaEntregue =
           (papel === 'Filmmaker'        && !!ensaio.link_arquivos_ensaio?.trim()) ||
-          (papel === 'Roteirista'       && !!ensaio.link_roteiro?.trim())          ||
+          (papel === 'Roteirista'       && !!ensaio.link_roteiro?.trim())         ||
           (papel === 'Auxiliar Técnico' && !!ensaio.link_materiais_auxiliares?.trim());
 
         if (jaEntregue) continue;
@@ -96,7 +110,7 @@ export async function dispararRelatorioDiario(): Promise<void> {
           hora_inicio: ensaio.hora_inicio.substring(0, 5),
           hora_fim: ensaio.hora_fim.substring(0, 5),
           objetivos: ensaio.objetivos || '',
-          papel,
+          papel, // 🟢 O cargo já está sendo enviado aqui para o n8n perfeitamente!
         });
       }
 
