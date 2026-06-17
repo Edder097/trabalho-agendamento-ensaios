@@ -44,7 +44,10 @@ export async function dispararRelatorioDiario(): Promise<void> {
         objetivos,
         fotografo_responsavel,
         roteirista_responsavel,
-        auxiliar_responsavel
+        auxiliar_responsavel,
+        link_roteiro,
+        link_arquivos_ensaio,
+        link_materiais_auxiliares
       FROM ensaios
       WHERE status = 'Agendado'
         AND (
@@ -75,17 +78,26 @@ export async function dispararRelatorioDiario(): Promise<void> {
         else if (ensaio.roteirista_responsavel === membro.nome) papel = 'Roteirista';
         else if (ensaio.auxiliar_responsavel === membro.nome) papel = 'Auxiliar Técnico';
 
-        if (papel) {
-          trabalhosDoMembro.push({
-            ensaio_id: ensaio.id,
-            empresa_nome: ensaio.empresa_nome,
-            data_ensaio: ensaio.data_ensaio,
-            hora_inicio: ensaio.hora_inicio.substring(0, 5),
-            hora_fim: ensaio.hora_fim.substring(0, 5),
-            objetivos: ensaio.objetivos || '',
-            papel,
-          });
-        }
+        if (!papel) continue;
+
+        // Se o link correspondente ao papel já foi preenchido,
+        // a entrega foi feita — não inclui no relatório
+        const jaEntregue =
+          (papel === 'Filmmaker'        && !!ensaio.link_arquivos_ensaio?.trim()) ||
+          (papel === 'Roteirista'       && !!ensaio.link_roteiro?.trim())          ||
+          (papel === 'Auxiliar Técnico' && !!ensaio.link_materiais_auxiliares?.trim());
+
+        if (jaEntregue) continue;
+
+        trabalhosDoMembro.push({
+          ensaio_id: ensaio.id,
+          empresa_nome: ensaio.empresa_nome,
+          data_ensaio: ensaio.data_ensaio,
+          hora_inicio: ensaio.hora_inicio.substring(0, 5),
+          hora_fim: ensaio.hora_fim.substring(0, 5),
+          objetivos: ensaio.objetivos || '',
+          papel,
+        });
       }
 
       return {
