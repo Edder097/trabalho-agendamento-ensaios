@@ -706,7 +706,13 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
         await axios.post(urlWebhookAtribuicao, {
           evento: 'EQUIPE_ATRIBUIDA',
           id: resultado.rows[0].id,
-          empresa_nome: resultado.rows[0].empresa_nome,
+
+          // 📋 Dados do ensaio
+          empresa_nome:  resultado.rows[0].empresa_nome,
+          objetivos:     resultado.rows[0].objetivos,
+          data_ensaio:   formatISO,
+          hora_inicio:   resultado.rows[0].hora_inicio,
+          hora_fim:      resultado.rows[0].hora_fim,
 
           // 📸 Fotógrafo / Filmmaker
           fotografo_responsavel,
