@@ -681,18 +681,53 @@ router.patch('/painel/ensaios/:id/status', async (req, res) => {
     if (urlWebhookAtribuicao) {
       try {
         const axios = (await import('axios')).default;
+
+        // 🔍 Busca email e telefone de cada membro escalado na tabela equipe
+        let dFoto = { email: '', telefone: '' };
+        let dRote = { email: '', telefone: '' };
+        let dAux  = { email: '', telefone: '' };
+
+        const nomesEscalados = [fotografo_responsavel, roteirista_responsavel, auxiliar_responsavel].filter(n => n && n.trim() !== '');
+        if (nomesEscalados.length > 0) {
+          const buscaEquipe = await pool.query(
+            'SELECT nome, email, telefone FROM equipe WHERE nome = ANY($1)',
+            [nomesEscalados]
+          );
+          buscaEquipe.rows.forEach(membro => {
+            if (membro.nome === fotografo_responsavel)  dFoto = membro;
+            if (membro.nome === roteirista_responsavel) dRote = membro;
+            if (membro.nome === auxiliar_responsavel)   dAux  = membro;
+          });
+        }
+
         const dataBanco = new Date(resultado.rows[0].data_ensaio);
         const formatISO = `${dataBanco.getUTCFullYear()}-${String(dataBanco.getUTCMonth() + 1).padStart(2,'0')}-${String(dataBanco.getUTCDate()).padStart(2,'0')}`;
+
         await axios.post(urlWebhookAtribuicao, {
           evento: 'EQUIPE_ATRIBUIDA',
           id: resultado.rows[0].id,
           empresa_nome: resultado.rows[0].empresa_nome,
+
+          // 📸 Fotógrafo / Filmmaker
           fotografo_responsavel,
+          fotografo_email:    dFoto.email    || '',
+          fotografo_telefone: formatarTelefoneWhatsapp(dFoto.telefone),
+
+          // ✍️ Roteirista
           roteirista_responsavel,
+          roteirista_email:    dRote.email    || '',
+          roteirista_telefone: formatarTelefoneWhatsapp(dRote.telefone),
+
+          // 💼 Auxiliar
           auxiliar_responsavel,
+          auxiliar_email:    dAux.email    || '',
+          auxiliar_telefone: formatarTelefoneWhatsapp(dAux.telefone),
+
           google_start_time: `${formatISO}T${resultado.rows[0].hora_inicio}-03:00`,
-          google_end_time: `${formatISO}T${resultado.rows[0].hora_fim}-03:00`
+          google_end_time:   `${formatISO}T${resultado.rows[0].hora_fim}-03:00`
         });
+
+        console.log(`📡 Webhook [EQUIPE_ATRIBUIDA] disparado com sucesso para ${resultado.rows[0].empresa_nome}`);
       } catch (err: any) { console.error('Erro webhook atribuição:', err.message); }
     }
 
